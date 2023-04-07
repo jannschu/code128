@@ -129,7 +129,7 @@ pub fn decode(modules: &[Module]) -> Result<Vec<u8>, DecodingError> {
         C,
     }
 
-    #[derive(Clone, Copy, PartialEq)]
+    #[derive(Debug, Clone, Copy, PartialEq)]
     enum Latin {
         Permanent(bool),
         Once(bool),
@@ -143,8 +143,12 @@ pub fn decode(modules: &[Module]) -> Result<Vec<u8>, DecodingError> {
         Some(crate::START_C) => Mode::C,
         _ => return Err(DecodingError::NoMode),
     };
+    if codes.peek().is_none() {
+        return Ok(vec![]);
+    }
     let mut latin = Latin::Permanent(false);
     let mut data = Vec::with_capacity(codes.len() - 1);
+    let mut switch_back = None;
     loop {
         let Some(ch) = codes.next() else {
             break;
@@ -152,9 +156,9 @@ pub fn decode(modules: &[Module]) -> Result<Vec<u8>, DecodingError> {
         match mode {
             Mode::A => match ch {
                 crate::SHIFT_MODE => {
-                    if let Some(ch) = codes.next() {
-                        data.push(decode_b(ch)?);
-                    }
+                    mode = Mode::B;
+                    switch_back = Some(Mode::A);
+                    continue;
                 }
                 crate::SWITCH_A => {
                     match latin {
@@ -169,22 +173,25 @@ pub fn decode(modules: &[Module]) -> Result<Vec<u8>, DecodingError> {
                 }
                 crate::SWITCH_B => {
                     mode = Mode::B;
+                    switch_back = None;
                     continue;
                 }
                 crate::SWITCH_C => {
                     mode = Mode::C;
+                    switch_back = None;
                     continue;
                 }
                 ch => data.push(decode_a(ch)?),
             },
             Mode::B => match ch {
                 crate::SHIFT_MODE => {
-                    if let Some(ch) = codes.next() {
-                        data.push(decode_a(ch)?);
-                    }
+                    mode = Mode::A;
+                    switch_back = Some(Mode::B);
+                    continue;
                 }
                 crate::SWITCH_A => {
                     mode = Mode::A;
+                    switch_back = None;
                     continue;
                 }
                 crate::SWITCH_B => {
@@ -200,6 +207,7 @@ pub fn decode(modules: &[Module]) -> Result<Vec<u8>, DecodingError> {
                 }
                 crate::SWITCH_C => {
                     mode = Mode::C;
+                    switch_back = None;
                     continue;
                 }
                 ch => data.push(decode_b(ch)?),
@@ -212,9 +220,11 @@ pub fn decode(modules: &[Module]) -> Result<Vec<u8>, DecodingError> {
                     }
                     crate::SWITCH_A => {
                         mode = Mode::A;
+                        switch_back = None;
                     }
                     crate::SWITCH_B => {
                         mode = Mode::B;
+                        switch_back = None;
                     }
                     _ => return Err(DecodingError::Unexpected(ch)),
                 }
@@ -230,6 +240,9 @@ pub fn decode(modules: &[Module]) -> Result<Vec<u8>, DecodingError> {
                 }
                 latin = Latin::Permanent(before);
             }
+        }
+        if let Some(new_mode) = switch_back.take() {
+            mode = new_mode;
         }
     }
     Ok(data)
@@ -275,4 +288,27 @@ fn test_latin() {
         let modules: Vec<Module> = super::Code128::encode(msg).modules().collect();
         assert_eq!(decode(&modules), Ok(msg.into()));
     }
+}
+
+#[test]
+fn test_empty() {
+    let msg = b"";
+    let modules: Vec<Module> = super::Code128::encode(msg).modules().collect();
+    assert_eq!(decode(&modules), Ok(msg.as_slice().into()));
+}
+
+#[test]
+fn test_case1() {
+    let msg = &[10, 246];
+    let code = super::Code128::encode(msg);
+    let modules: Vec<Module> = code.modules().collect();
+    assert_eq!(decode(&modules), Ok(msg.as_slice().into()));
+}
+
+#[test]
+fn test_case2() {
+    let msg = &[255, 145, 246, 246];
+    let code = super::Code128::encode(msg);
+    let modules: Vec<Module> = code.modules().collect();
+    assert_eq!(decode(&modules), Ok(msg.as_slice().into()));
 }

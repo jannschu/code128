@@ -187,7 +187,7 @@ pub(super) fn encode_as_indices(mut bytes: &[u8]) -> Vec<u8> {
 
                             // switch mode
                             let mut opt2 = candidate;
-                            opt2.switch(Mode::B);
+                            opt2.switch($other);
                             new_candidates.push(opt2.push([symbol]));
                         } else {
                             // shift mode, shift latin
