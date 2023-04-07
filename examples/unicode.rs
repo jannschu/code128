@@ -8,7 +8,7 @@ fn main() {
         let mut stdin = std::io::stdin();
         stdin.read_to_end(&mut msg).unwrap();
     }
-    let code = Code128::encode(&msg).unwrap();
+    let code = Code128::encode(&msg);
     let string = code128::modules_to_blocks(code.modules());
     println!("{}", &string);
     println!("{}", &string);

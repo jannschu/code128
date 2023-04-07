@@ -1,4 +1,4 @@
-use super::{Module, SHIFT, START_A, START_B, START_C, STOP, SWITCH_A, SWITCH_B, SWITCH_C};
+use super::{Module, SHIFT_MODE, START_A, START_B, START_C, SWITCH_A, SWITCH_B, SWITCH_C};
 
 pub(crate) const PATTERNS: [u16; 109] = [
     0x6cc, 0x66c, 0x666, 0x498, 0x48c, 0x44c, 0x4c8, 0x4c4, 0x464, 0x648, 0x644, 0x624, 0x59c,
@@ -12,166 +12,271 @@ pub(crate) const PATTERNS: [u16; 109] = [
     0x690, 0x69c, 0x63a, 0x6b8, 0x18eb,
 ];
 
-fn encode_a(val: u8) -> Option<u8> {
+fn encode_a(val: u8) -> Option<(bool, u8)> {
     match val {
-        b' '..=b'_' => Some(val - b' '),
-        0..=0x1F => Some(val + 0x40),
+        0..=0x1F => Some((false, val + 0x40)),
+        b' '..=b'_' => Some((false, val - b' ')),
+        0x80..=0x9F => Some((true, val - 128 + 0x40)),
+        0xA0..=0xDF => Some((true, val - 128 - b' ')),
         _ => None,
     }
 }
 
-fn encode_b(val: u8) -> Option<u8> {
+fn encode_b(val: u8) -> Option<(bool, u8)> {
     match val {
-        b' '..=0x7F => Some(val - b' '),
+        b' '..=0x7F => Some((false, val - b' ')),
+        0xA0..=0xFF => Some((true, val - 128 - b' ')),
         _ => None,
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+enum Mode {
+    A,
+    B,
+    C,
+}
+
+impl Mode {
+    #[inline]
+    fn switch(self) -> u8 {
+        match self {
+            Mode::A => SWITCH_A,
+            Mode::B => SWITCH_B,
+            Mode::C => SWITCH_C,
+        }
+    }
+
+    #[inline]
+    fn encode(self, val: u8) -> Option<(bool, u8)> {
+        match self {
+            Mode::A => encode_a(val),
+            Mode::B => encode_b(val),
+            Mode::C => unreachable!(),
+        }
     }
 }
 
 #[derive(Debug, PartialEq, Clone)]
 struct Encodation {
-    patterns: Vec<u8>,
+    mode: Mode,
+    latin: bool,
+    symbols: Vec<u8>,
 }
 
 impl Encodation {
-    fn cost(&self) -> usize {
-        self.patterns.len()
+    fn new(mode: Mode) -> Self {
+        let start_pattern = match mode {
+            Mode::A => START_A,
+            Mode::B => START_B,
+            Mode::C => START_C,
+        };
+        Self {
+            mode,
+            latin: false,
+            symbols: vec![start_pattern],
+        }
     }
 
-    fn push(mut self, i: u8) -> Self {
-        self.patterns.push(i);
-        self
-    }
-
-    fn push2(mut self, i1: u8, i2: u8) -> Self {
-        self.patterns.push(i1);
-        self.patterns.push(i2);
-        self
-    }
-
-    fn checksum(self) -> Self {
-        let weighted_sum = self
-            .patterns
-            .iter()
-            .enumerate()
-            .map(|(i, idx)| (i.max(1) as u64) * *idx as u64)
-            .sum::<u64>();
-        self.push((weighted_sum % 103) as u8)
+    #[inline]
+    fn switch(&mut self, mode: Mode) {
+        self.symbols.push(mode.switch());
+        self.mode = mode;
     }
 }
 
-fn add_c_switch_maybe(bytes: &mut &[u8], enc: &mut Encodation) -> bool {
-    match *bytes {
-        [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9', c3 @ b'0'..=b'9', c4 @ b'0'..=b'9'] => {
-            enc.patterns.push(SWITCH_C);
-            enc.patterns.push((c1 - b'0') * 10 + (c2 - b'0'));
-            enc.patterns.push((c3 - b'0') * 10 + (c4 - b'0'));
-            *bytes = &[];
-            true
+impl Encodation {
+    fn push<const N: usize>(mut self, symbols: [u8; N]) -> Self {
+        for symbol in symbols {
+            self.symbols.push(symbol);
         }
-        [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9', c3 @ b'0'..=b'9', c4 @ b'0'..=b'9', c5 @ b'0'..=b'9', c6 @ b'0'..=b'9', ..] =>
-        {
-            enc.patterns.push(SWITCH_C);
-            enc.patterns.push((c1 - b'0') * 10 + (c2 - b'0'));
-            enc.patterns.push((c3 - b'0') * 10 + (c4 - b'0'));
-            enc.patterns.push((c5 - b'0') * 10 + (c6 - b'0'));
-            *bytes = &bytes[6..];
-            true
-        }
-        _ => false,
+        self
     }
 }
 
-pub(super) fn encode_as_indices(mut bytes: &[u8]) -> Option<Vec<u8>> {
-    let mut best_a = Some(Encodation {
-        patterns: vec![START_A],
-    });
-    let mut best_b = Some(Encodation {
-        patterns: vec![START_B],
-    });
-    let mut best_c = Some(Encodation {
-        patterns: vec![START_C],
-    });
+fn eat_double_digits<'a>(mut bytes: &'a [u8], encs: &mut [Encodation]) -> &'a [u8] {
+    while let [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9', ..] = bytes {
+        for enc in encs.iter_mut() {
+            enc.symbols.push((c1 - b'0') * 10 + (c2 - b'0'));
+        }
+        bytes = &bytes[2..];
+    }
+    bytes
+}
 
-    while !bytes.is_empty() && (best_a.is_some() || best_b.is_some() || best_c.is_some()) {
-        if let Some(code) = best_c.take() {
-            if matches!(bytes, [b'0'..=b'9', b'0'..=b'9', ..]) {
-                best_a = None;
-                best_b = None;
-                best_c = Some(code.push((bytes[0] - b'0') * 10 + (bytes[1] - b'0')));
-                bytes = &bytes[2..];
-                continue;
-            } else if best_a.is_none() && best_b.is_none() {
-                let byte = bytes[0];
-                match (encode_a(byte), encode_b(byte)) {
-                    (Some(a), Some(b)) => {
-                        best_a = Some(code.clone().push2(SWITCH_A, a));
-                        best_b = Some(code.push2(SWITCH_B, b));
+pub(super) fn encode_as_indices(mut bytes: &[u8]) -> Vec<u8> {
+    let mut head = Vec::new();
+
+    let mut candidates = Vec::new();
+    candidates.push(Encodation::new(Mode::C));
+    bytes = eat_double_digits(bytes, &mut candidates);
+    if candidates[0].symbols.len() == 1 {
+        candidates.clear();
+        candidates.push(Encodation::new(Mode::A));
+        candidates.push(Encodation::new(Mode::B));
+    }
+
+    let mut new_candidates = Vec::new();
+    while !bytes.is_empty() {
+        debug_assert!(new_candidates.is_empty());
+
+        // check if a switch to C is necessary,
+        // candidates contains either only candidates in mode C or only ones in A or B
+        if candidates[0].mode != Mode::C {
+            match *bytes {
+                // four digits at the end of data
+                [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9', c3 @ b'0'..=b'9', c4 @ b'0'..=b'9'] => {
+                    let pair1 = (c1 - b'0') * 10 + (c2 - b'0');
+                    let pair2 = (c3 - b'0') * 10 + (c4 - b'0');
+                    for enc in candidates.iter_mut() {
+                        enc.switch(Mode::C);
+                        enc.symbols.push(pair1);
+                        enc.symbols.push(pair2);
                     }
-                    (Some(a), None) => {
-                        best_a = Some(code.push2(SWITCH_A, a));
-                    }
-                    (None, Some(b)) => {
-                        best_b = Some(code.push2(SWITCH_B, b));
-                    }
-                    (None, None) => return None,
+                    break;
                 }
-                bytes = &bytes[1..];
-                continue;
-            } else {
-                best_c = None;
+                // six digits in the middle
+                [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9', c3 @ b'0'..=b'9', c4 @ b'0'..=b'9', c5 @ b'0'..=b'9', c6 @ b'0'..=b'9', ..] =>
+                {
+                    let pair1 = (c1 - b'0') * 10 + (c2 - b'0');
+                    let pair2 = (c3 - b'0') * 10 + (c4 - b'0');
+                    let pair3 = (c5 - b'0') * 10 + (c6 - b'0');
+                    for enc in candidates.iter_mut() {
+                        enc.switch(Mode::C);
+                        enc.symbols.push(pair1);
+                        enc.symbols.push(pair2);
+                        enc.symbols.push(pair3);
+                    }
+                    bytes = eat_double_digits(&bytes[6..], &mut candidates);
+                    continue;
+                }
+                _ => (),
             }
         }
+
         let byte = bytes[0];
-        let mut b = best_b.take();
-        if let Some(mut code) = best_a.take() {
-            if add_c_switch_maybe(&mut bytes, &mut code) {
-                debug_assert_eq!(best_c, None);
-                best_c = Some(code);
-                best_b = None;
-                continue;
-            }
-            if let Some(pattern) = encode_a(byte) {
-                best_a = Some(code.push(pattern));
-            } else if let Some(pattern) = encode_b(byte) {
-                if b.is_none() {
-                    best_b = Some(code.clone().push2(SWITCH_B, pattern));
-                }
-                best_a = Some(code.push2(SHIFT, pattern));
-            }
-        }
-        if let Some(mut code) = b.take() {
-            if add_c_switch_maybe(&mut bytes, &mut code) {
-                debug_assert_eq!(best_c, None);
-                best_c = Some(code);
-                best_a = None;
-                continue;
-            }
-            if let Some(pattern) = encode_b(byte) {
-                best_b = Some(code.push(pattern));
-            } else if let Some(pattern) = encode_a(byte) {
-                if best_a.is_none() {
-                    best_a = Some(code.clone().push2(SWITCH_A, pattern));
-                }
-                best_b = Some(code.push2(SHIFT, pattern));
-            }
-        }
-
-        match (
-            best_a.as_ref().map(Encodation::cost),
-            best_b.as_ref().map(Encodation::cost),
-        ) {
-            (Some(a), Some(b)) if a < b => best_b = None,
-            (Some(a), Some(b)) if a > b => best_a = None,
-            _ => (),
-        }
-
         bytes = &bytes[1..];
+
+        for mut candidate in candidates.drain(..) {
+            // modes A and B are hanled symmetrically, we use a macro for these
+            macro_rules! handle_ab {
+                ($candidate:ident, $me:expr, ($latin:expr, $symbol:expr)) => {
+                    if $candidate.latin == $latin {
+                        new_candidates.push($candidate.push([$symbol]));
+                    } else {
+                        // shift latin
+                        let opt1 = $candidate.clone();
+                        new_candidates.push(opt1.push([$me.switch(), $symbol]));
+
+                        // switch latin
+                        let mut opt2 = $candidate;
+                        opt2.latin = $latin;
+                        new_candidates.push(opt2.push([$me.switch(), $me.switch(), $symbol]));
+                    }
+                };
+                ($me:expr, $other:expr) => {
+                    if let Some((latin, symbol)) = $me.encode(byte) {
+                        // if this mode can encode the symbol there is no need to consider a switch
+                        handle_ab!(candidate, $me, (latin, symbol));
+                    } else if let Some((latin, symbol)) = $other.encode(byte) {
+                        // other mode can encode, we can shift or switch
+                        if candidate.latin == latin {
+                            // shift mode
+                            let opt1 = candidate.clone();
+                            new_candidates.push(opt1.push([SHIFT_MODE, symbol]));
+
+                            // switch mode
+                            let mut opt2 = candidate;
+                            opt2.switch(Mode::B);
+                            new_candidates.push(opt2.push([symbol]));
+                        } else {
+                            // shift mode, shift latin
+                            let opt1 = candidate.clone();
+                            new_candidates.push(opt1.push([SHIFT_MODE, $other.switch(), symbol]));
+
+                            // shift mode, switch latin
+                            let mut opt2 = candidate.clone();
+                            opt2.latin = latin;
+                            new_candidates.push(opt2.push([
+                                SHIFT_MODE,
+                                $other.switch(),
+                                $other.switch(),
+                                symbol,
+                            ]));
+
+                            // switch mode, shift latin
+                            let mut opt3 = candidate.clone();
+                            opt3.switch($other);
+                            new_candidates.push(opt3.push([$other.switch(), symbol]));
+
+                            // switch mode, switch latin
+                            let mut opt4 = candidate;
+                            opt4.switch($other);
+                            opt4.latin = latin;
+                            new_candidates.push(opt4.push([
+                                $other.switch(),
+                                $other.switch(),
+                                symbol,
+                            ]));
+                        }
+                    }
+                };
+            }
+            match candidate.mode {
+                Mode::A => handle_ab!(Mode::A, Mode::B),
+                Mode::B => handle_ab!(Mode::B, Mode::A),
+                Mode::C => {
+                    // C can no longer encode the symbol, we switch to A or B
+                    match (encode_a(byte), encode_b(byte)) {
+                        (Some((latin_a, symbol_a)), Some((latin_b, symbol_b))) => {
+                            let mut opt1 = candidate.clone();
+                            opt1.switch(Mode::A);
+                            handle_ab!(opt1, Mode::A, (latin_a, symbol_a));
+                            let mut opt2 = candidate;
+                            opt2.switch(Mode::B);
+                            handle_ab!(opt2, Mode::B, (latin_b, symbol_b));
+                        }
+                        (Some((latin, symbol)), None) => {
+                            candidate.switch(Mode::A);
+                            handle_ab!(candidate, Mode::A, (latin, symbol));
+                        }
+                        (None, Some((latin, symbol))) => {
+                            candidate.switch(Mode::B);
+                            handle_ab!(candidate, Mode::B, (latin, symbol));
+                        }
+                        (None, None) => unreachable!(),
+                    }
+                }
+            }
+        }
+
+        std::mem::swap(&mut candidates, &mut new_candidates);
+
+        // remove hopeless cases
+        candidates.sort_unstable_by_key(|c| c.symbols.len());
+        for i in 0..candidates.len() {
+            for j in ((i + 1)..candidates.len()).rev() {
+                let switch_cost = 1 + 2 * (candidates[i].latin != candidates[j].latin) as usize;
+                if candidates[i].symbols.len() + switch_cost <= candidates[j].symbols.len() {
+                    candidates.pop();
+                } else {
+                    break;
+                }
+            }
+        }
+
+        if candidates.len() == 1 {
+            // to avoid copying the same symbol
+            head.append(&mut candidates[0].symbols);
+        }
     }
 
-    best_c
-        .or(best_a)
-        .or(best_b)
-        .map(|c| c.checksum().push(STOP).patterns)
+    let mut candidate = candidates
+        .into_iter()
+        .min_by_key(|c| c.symbols.len())
+        .unwrap();
+    head.append(&mut candidate.symbols);
+    head
 }
 
 pub(super) fn bits_to_modules(mut bits: u16) -> Vec<Module> {
@@ -220,7 +325,7 @@ fn test_bits_to_modules() {
 }
 
 #[test]
-fn test_reverse() {
+fn test_patterns() {
     for (i, pattern) in PATTERNS.iter().cloned().enumerate() {
         assert_eq!(crate::decode::lookup(pattern), Ok(i as u8));
     }
@@ -228,12 +333,72 @@ fn test_reverse() {
 
 #[test]
 fn test_switch_instead_of_shift() {
-    let msg = b"\nab";
-    let mut indices = encode_as_indices(msg).unwrap();
-    indices.pop();
-    indices.pop();
     assert_eq!(
-        indices,
-        vec![START_A, b'\n' + 0x40, SWITCH_B, b'a' - b' ', b'b' - b' ']
+        encode_as_indices(b"\nab"),
+        vec![START_A, b'\n' + 0x40, SWITCH_B, b'a' - b' ', b'b' - b' '],
+    )
+}
+
+#[test]
+fn test_latin_shift() {
+    assert_eq!(
+        encode_as_indices(b"\x00\x80"),
+        vec![START_A, b'\x00' + 0x40, SWITCH_A, 0x40],
+    )
+}
+
+#[test]
+fn test_latin_switch() {
+    assert_eq!(
+        encode_as_indices(b"\x00\x80\x81\x82"),
+        vec![
+            START_A,
+            b'\x00' + 0x40,
+            SWITCH_A,
+            SWITCH_A,
+            0x40,
+            0x41,
+            0x42
+        ],
+    )
+}
+
+#[test]
+fn test_latin_switch_cross_c() {
+    assert_eq!(
+        encode_as_indices(b"\x00\x80000000\x80\x81\x82"),
+        vec![
+            START_A,
+            b'\x00' + 0x40,
+            SWITCH_A,
+            SWITCH_A,
+            0x40,
+            SWITCH_C,
+            0,
+            0,
+            0,
+            SWITCH_A,
+            0x40,
+            0x41,
+            0x42
+        ],
+    )
+}
+
+#[test]
+fn test_latin_shift_back() {
+    assert_eq!(
+        encode_as_indices(b"|\xF0\xF1\xF21"),
+        vec![
+            START_B,
+            b'|' - b' ',
+            SWITCH_B,
+            SWITCH_B,
+            0xF0 - 128 - b' ',
+            0xF1 - 128 - b' ',
+            0xF2 - 128 - b' ',
+            SWITCH_B,
+            b'1' - b' ',
+        ]
     )
 }

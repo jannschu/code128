@@ -2,22 +2,31 @@ use thiserror::Error;
 
 use crate::Module;
 
+/// Errors that can occur during decoding.
 #[derive(Error, Debug, PartialEq)]
 pub enum DecodingError {
+    /// A sequence of modules resulted in an unknown pattern.
     #[error("pattern {0:b} not reconized")]
     Pattern(u16),
+    /// A module's width or spacing is not valid.
     #[error("modules are not valid")]
     InvalidModules,
+    /// The stop code at the end is wrong.
     #[error("wrong stop code")]
     WrongStop,
+    /// The input was too short.
     #[error("code too short to be valid")]
     Short,
+    /// The code's length can not fit an allowed sequence of modules.
     #[error("length not correct")]
     Length,
+    /// The checksum did not match.
     #[error("checksum mismatch")]
     Checksum,
+    /// The code did not start with a mode signal.
     #[error("start char did not signal mode")]
     NoMode,
+    /// A symbol occured in a mode that did not support it or is not implemeneted.
     #[error("unexpected character {0:x}")]
     Unexpected(u8),
 }
@@ -89,12 +98,7 @@ fn decode_codes(modules: &[Module]) -> Result<Vec<u8>, DecodingError> {
         .chunks_exact(3)
         .map(|chunk| lookup(modules_to_pattern(chunk)?))
         .collect::<Result<Vec<u8>, _>>()?;
-    let computed_checksum = (result
-        .iter()
-        .enumerate()
-        .map(|(w, x)| w.max(1) as u64 * *x as u64)
-        .sum::<u64>()
-        % 103) as u8;
+    let computed_checksum = crate::checksum(result.iter().cloned());
     if checksum != computed_checksum {
         return Err(DecodingError::Checksum);
     }
@@ -116,6 +120,7 @@ fn decode_b(ch: u8) -> Result<u8, DecodingError> {
     }
 }
 
+/// Decode a sequence of modules.
 pub fn decode(modules: &[Module]) -> Result<Vec<u8>, DecodingError> {
     #[derive(Clone, Copy, Debug)]
     enum Mode {
@@ -144,10 +149,9 @@ pub fn decode(modules: &[Module]) -> Result<Vec<u8>, DecodingError> {
         let Some(ch) = codes.next() else {
             break;
         };
-        match dbg!(mode) {
+        match mode {
             Mode::A => match ch {
-                crate::SHIFT => {
-                    println!("SHIFT");
+                crate::SHIFT_MODE => {
                     if let Some(ch) = codes.next() {
                         data.push(decode_b(ch)?);
                     }
@@ -155,6 +159,7 @@ pub fn decode(modules: &[Module]) -> Result<Vec<u8>, DecodingError> {
                 crate::SWITCH_A => {
                     match latin {
                         Latin::Permanent(x) if codes.peek() == Some(&crate::SWITCH_A) => {
+                            let _ = codes.next();
                             latin = Latin::Permanent(!x);
                         }
                         Latin::Permanent(x) => latin = Latin::Once(x),
@@ -173,8 +178,7 @@ pub fn decode(modules: &[Module]) -> Result<Vec<u8>, DecodingError> {
                 ch => data.push(decode_a(ch)?),
             },
             Mode::B => match ch {
-                crate::SHIFT => {
-                    println!("SHIFT");
+                crate::SHIFT_MODE => {
                     if let Some(ch) = codes.next() {
                         data.push(decode_a(ch)?);
                     }
@@ -186,6 +190,7 @@ pub fn decode(modules: &[Module]) -> Result<Vec<u8>, DecodingError> {
                 crate::SWITCH_B => {
                     match latin {
                         Latin::Permanent(x) if codes.peek() == Some(&crate::SWITCH_B) => {
+                            let _ = codes.next();
                             latin = Latin::Permanent(!x);
                         }
                         Latin::Permanent(x) => latin = Latin::Once(x),
@@ -217,11 +222,11 @@ pub fn decode(modules: &[Module]) -> Result<Vec<u8>, DecodingError> {
             }
         }
         match latin {
-            Latin::Permanent(true) => *data.last_mut().unwrap() += 127,
+            Latin::Permanent(true) => *data.last_mut().unwrap() += 128,
             Latin::Permanent(false) => (),
             Latin::Once(before) => {
                 if !before {
-                    *data.last_mut().unwrap() += 127;
+                    *data.last_mut().unwrap() += 128;
                 }
                 latin = Latin::Permanent(before);
             }
@@ -254,6 +259,20 @@ fn test_modules_to_pattern() {
 #[test]
 fn test_hello_world() {
     let msg = b"HELLO\n123456w0r1\rd";
-    let modules: Vec<Module> = super::Code128::encode(msg).unwrap().modules().collect();
+    let modules: Vec<Module> = super::Code128::encode(msg).modules().collect();
     assert_eq!(decode(&modules), Ok(msg.as_slice().into()));
+}
+
+#[test]
+fn test_latin() {
+    let messages: Vec<&[u8]> = vec![
+        b"\x00\x80",
+        b"\x00\x80\x81\x82",
+        b"\x00\x80000000\x80\x81\x82",
+        b"|\xF0\xF1\xF21",
+    ];
+    for msg in messages {
+        let modules: Vec<Module> = super::Code128::encode(msg).modules().collect();
+        assert_eq!(decode(&modules), Ok(msg.into()));
+    }
 }
