@@ -2,8 +2,13 @@
 name = "code128"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+authors = ["Jannik Schürg <jannik.schuerg+crates@posteo.de>"]
+readme = "README.md"
+license = "Apache-2.0 OR MIT"
+description = "Code 128 decoding and encoding"
+repository = "https://github.com/jannschu/code128/"
+categories = ["encoding"]
+keywords = ["code128", "barcode"]
 
 [dependencies]
 thiserror = "1.0.40"
