@@ -111,7 +111,7 @@ impl Code128 {
 
     /// Encode the string as Code 128 using Latin 1.
     ///
-    /// The functions retunrs `None` if the string includes characters not
+    /// The functions returns `None` if the string includes characters not
     /// included in Latin 1.
     ///
     /// The control charactes of ASCII, `0x00` to `0x19`, are also encoded.
