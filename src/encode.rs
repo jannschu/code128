@@ -157,7 +157,7 @@ pub(super) fn encode_as_indices(mut bytes: &[u8]) -> Vec<u8> {
                     let switch_cost = (candidates[i].mode != candidates[j].mode) as usize
                         + 2 * (candidates[i].latin != candidates[j].latin) as usize;
                     if candidates[i].symbols.len() + switch_cost <= candidates[j].symbols.len() {
-                        candidates.pop();
+                        candidates.remove(j);
                     }
                 }
             }
@@ -878,4 +878,20 @@ fn test_latin_switch_ending_with_two_digits() {
         encode_as_indices_fast(msg),
         vec![START_A, 0, SWITCH_A, SWITCH_A, 0x40, 0x50, 0, SWITCH_C, 35],
     );
+}
+
+#[test]
+fn only_high() {
+    let msg = b"\xFF\xFF\xFF";
+    assert_eq!(
+        encode_as_indices(msg),
+        vec![START_B, SWITCH_B, SWITCH_B, 95, 95, 95],
+    );
+
+    // fast encoder
+    assert_eq!(
+        encode_as_indices_fast(msg),
+        vec![START_B, SWITCH_B, SWITCH_B, 95, 95, 95],
+    );
+}
 }
