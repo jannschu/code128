@@ -104,19 +104,66 @@ fn eat_double_digits<'a>(mut bytes: &'a [u8], encs: &mut [Encodation]) -> &'a [u
     bytes
 }
 
+fn c_start(mut bytes: &[u8]) -> Option<Encodation> {
+    match bytes {
+        [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9'] => {
+            Some(Encodation::new(Mode::C).push([(c1 - b'0') * 10 + (c2 - b'0')]))
+        }
+        [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9', c3 @ b'0'..=b'9', c4 @ b'0'..=b'9', ..] => {
+            let mut enc = Encodation::new(Mode::C).push([
+                (c1 - b'0') * 10 + (c2 - b'0'),
+                (c3 - b'0') * 10 + (c4 - b'0'),
+            ]);
+            bytes = &bytes[4..];
+            while let [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9'] = bytes {
+                enc.symbols.push((c1 - b'0') * 10 + (c2 - b'0'));
+                bytes = &bytes[2..];
+            }
+            Some(enc)
+        }
+        _ => None,
+    }
+}
+
 pub(super) fn encode_as_indices(mut bytes: &[u8]) -> Vec<u8> {
     let mut head = Vec::new();
 
     let mut candidates = Vec::new();
-    candidates.push(Encodation::new(Mode::C));
-    bytes = eat_double_digits(bytes, &mut candidates);
-    if candidates[0].symbols.len() == 1 {
+    if let Some(c) = c_start(bytes) {
+        let eaten = (c.symbols.len() - 1) * 2;
+        candidates.push(c);
+        bytes = &bytes[eaten..];
+    } else {
         candidates.clear();
         candidates.push(Encodation::new(Mode::A));
         candidates.push(Encodation::new(Mode::B));
     }
 
     let mut new_candidates = Vec::new();
+
+    macro_rules! enplace_new_candidates {
+        () => {
+            std::mem::swap(&mut candidates, &mut new_candidates);
+
+            // remove hopeless cases
+            candidates.sort_unstable_by_key(|c| c.symbols.len());
+            for i in 0..candidates.len() {
+                for j in ((i + 1)..candidates.len()).rev() {
+                    let switch_cost = (candidates[i].mode != candidates[j].mode) as usize
+                        + 2 * (candidates[i].latin != candidates[j].latin) as usize;
+                    if candidates[i].symbols.len() + switch_cost <= candidates[j].symbols.len() {
+                        candidates.pop();
+                    }
+                }
+            }
+
+            if candidates.len() == 1 {
+                // to avoid copying the same symbol
+                head.append(&mut candidates[0].symbols);
+            }
+        };
+    }
+
     while !bytes.is_empty() {
         debug_assert!(new_candidates.is_empty());
 
@@ -124,31 +171,51 @@ pub(super) fn encode_as_indices(mut bytes: &[u8]) -> Vec<u8> {
         // candidates contains either only candidates in mode C or only ones in A or B
         if candidates[0].mode != Mode::C {
             match *bytes {
-                // four digits at the end of data
-                [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9', c3 @ b'0'..=b'9', c4 @ b'0'..=b'9'] => {
-                    let pair1 = (c1 - b'0') * 10 + (c2 - b'0');
-                    let pair2 = (c3 - b'0') * 10 + (c4 - b'0');
+                // for two digits at the end of data it is advantageous
+                // to switch if a candidate is in latin mode
+                [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9'] => {
                     for enc in candidates.iter_mut() {
                         enc.switch(Mode::C);
-                        enc.symbols.push(pair1);
-                        enc.symbols.push(pair2);
+                        enc.symbols.push((c1 - b'0') * 10 + (c2 - b'0'));
                     }
                     break;
                 }
-                // six digits in the middle
-                [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9', c3 @ b'0'..=b'9', c4 @ b'0'..=b'9', c5 @ b'0'..=b'9', c6 @ b'0'..=b'9', ..] =>
-                {
+                // at least four digits are the break even point for switching to
+                // C mode, and its advantageous for candidates in latin mode
+                [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9', c3 @ b'0'..=b'9', c4 @ b'0'..=b'9', ..] => {
                     let pair1 = (c1 - b'0') * 10 + (c2 - b'0');
                     let pair2 = (c3 - b'0') * 10 + (c4 - b'0');
-                    let pair3 = (c5 - b'0') * 10 + (c6 - b'0');
                     for enc in candidates.iter_mut() {
                         enc.switch(Mode::C);
                         enc.symbols.push(pair1);
                         enc.symbols.push(pair2);
-                        enc.symbols.push(pair3);
                     }
-                    bytes = eat_double_digits(&bytes[6..], &mut candidates);
+                    bytes = eat_double_digits(&bytes[4..], &mut candidates);
                     continue;
+                }
+                // Two digits are advantageous for candidates in
+                // latin mode, but disadvantageous for the rest unless they are last.
+                //
+                // Because this branch is last we know that the next character(s)
+                // can not be encoded in C mode.
+                [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9', ..] if candidates.iter().any(|c| c.latin) => {
+                    let digits = (c1 - b'0') * 10 + (c2 - b'0');
+                    for enc in candidates.drain(..) {
+                        if enc.latin {
+                            // switch to C, then back to A or B
+                            let mut alt1 = enc.push([SWITCH_C, digits]);
+                            let mut alt2 = alt1.clone();
+                            alt1.switch(Mode::A);
+                            alt2.switch(Mode::B);
+                            new_candidates.push(alt1);
+                            new_candidates.push(alt2);
+                        } else {
+                            // encode directly
+                            new_candidates.push(enc.push([c1 - b' ', c2 - b' ']));
+                        }
+                    }
+                    bytes = &bytes[2..];
+                    enplace_new_candidates!();
                 }
                 _ => (),
             }
@@ -250,25 +317,7 @@ pub(super) fn encode_as_indices(mut bytes: &[u8]) -> Vec<u8> {
             }
         }
 
-        std::mem::swap(&mut candidates, &mut new_candidates);
-
-        // remove hopeless cases
-        candidates.sort_unstable_by_key(|c| c.symbols.len());
-        for i in 0..candidates.len() {
-            for j in ((i + 1)..candidates.len()).rev() {
-                let switch_cost = 1 + 2 * (candidates[i].latin != candidates[j].latin) as usize;
-                if candidates[i].symbols.len() + switch_cost <= candidates[j].symbols.len() {
-                    candidates.pop();
-                } else {
-                    break;
-                }
-            }
-        }
-
-        if candidates.len() == 1 {
-            // to avoid copying the same symbol
-            head.append(&mut candidates[0].symbols);
-        }
+        enplace_new_candidates!();
     }
 
     let mut candidate = candidates
@@ -364,9 +413,17 @@ fn test_latin_switch() {
 }
 
 #[test]
-fn test_latin_switch_cross_c() {
+fn test_latin_switch_cross_c1() {
     assert_eq!(
-        encode_as_indices(b"\x00\x80000000\x80\x81\x82"),
+        encode_as_indices(b"\x80\x80\x8000\x80"),
+        vec![START_A, SWITCH_A, SWITCH_A, 0x40, 0x40, 0x40, SWITCH_C, 0, SWITCH_A, 0x40],
+    )
+}
+
+#[test]
+fn test_latin_switch_cross_c2() {
+    assert_eq!(
+        encode_as_indices(b"\x00\x8000000001\x80\x81\x82"),
         vec![
             START_A,
             b'\x00' + 0x40,
@@ -377,6 +434,7 @@ fn test_latin_switch_cross_c() {
             0,
             0,
             0,
+            1,
             SWITCH_A,
             0x40,
             0x41,
@@ -401,4 +459,15 @@ fn test_latin_shift_back() {
             b'1' - b' ',
         ]
     )
+}
+
+#[test]
+fn test_digit_start() {
+    for msg in [b"000", b"00a"] {
+        let indices = encode_as_indices(msg);
+        assert_ne!(indices[0], START_C);
+        assert_eq!(indices.len(), 4);
+    }
+
+    assert_eq!(encode_as_indices(b"99").len(), 2);
 }
