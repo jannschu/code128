@@ -455,7 +455,7 @@ pub(super) fn encode_as_indices_fast(mut bytes: &[u8]) -> Vec<u8> {
         bytes = &bytes[1..];
 
         #[inline]
-        fn count(mut bytes: &[u8], range: std::ops::RangeInclusive<u8>) -> (bool, usize) {
+        fn count(mut bytes: &[u8], range: std::ops::RangeInclusive<u8>) -> (usize, usize) {
             let mut n = 0;
             while !bytes.is_empty() && n < 4 {
                 if let [b'0'..=b'9', b'0'..=b'9', ..] = bytes {
@@ -468,7 +468,7 @@ pub(super) fn encode_as_indices_fast(mut bytes: &[u8]) -> Vec<u8> {
                 n += 1;
                 bytes = &bytes[1..];
             }
-            (bytes.is_empty(), n)
+            (bytes.len(), n)
         }
 
         if latin != enc.latin {
@@ -476,10 +476,10 @@ pub(super) fn encode_as_indices_fast(mut bytes: &[u8]) -> Vec<u8> {
             // we switch for 4 (2 at the end) consecutive characters, otherwise latch
             let switch = if enc.latin {
                 // switching back to normal
-                matches!(count(bytes, 0..=127), (true, 2..=4) | (false, 4))
+                matches!(count(bytes, 0..=127), (0, 2..=4) | (1, 3) | (1.., 4))
             } else {
                 // switching to latin
-                matches!(count(bytes, 128..=255), (true, 2..=4) | (false, 4))
+                matches!(count(bytes, 128..=255), (0, 2..=4) | (1, 3) | (1.., 4))
             };
             if switch {
                 enc.symbols.insert(pos, enc.mode.switch());
@@ -894,4 +894,16 @@ fn only_high() {
         vec![START_B, SWITCH_B, SWITCH_B, 95, 95, 95],
     );
 }
+
+#[test]
+fn test_latin_switch_end_of_data_edge_case() {
+    let msg = b"\xff\xff\xff\xff\x00";
+    assert_eq!(
+        encode_as_indices(msg),
+        vec![START_B, SWITCH_B, SWITCH_B, 95, 95, 95, 95, SHIFT_MODE, SWITCH_A, 0x40],
+    );
+    assert_eq!(
+        encode_as_indices_fast(msg),
+        vec![START_B, SWITCH_B, SWITCH_B, 95, 95, 95, 95, SWITCH_B, SHIFT_MODE, 0x40],
+    );
 }
