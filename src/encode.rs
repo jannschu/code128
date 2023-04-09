@@ -1,5 +1,6 @@
 use super::{Module, SHIFT_MODE, START_A, START_B, START_C, SWITCH_A, SWITCH_B, SWITCH_C};
 
+/// Line patterns used in Code 128 by index, encoded as binary.
 pub(crate) const PATTERNS: [u16; 109] = [
     0x6cc, 0x66c, 0x666, 0x498, 0x48c, 0x44c, 0x4c8, 0x4c4, 0x464, 0x648, 0x644, 0x624, 0x59c,
     0x4dc, 0x4ce, 0x5cc, 0x4ec, 0x4e6, 0x672, 0x65c, 0x64e, 0x6e4, 0x674, 0x76e, 0x74c, 0x72c,
@@ -12,6 +13,7 @@ pub(crate) const PATTERNS: [u16; 109] = [
     0x690, 0x69c, 0x63a, 0x6b8, 0x18eb,
 ];
 
+/// Encode a characters using Mode A if possible.
 fn encode_a(val: u8) -> Option<(bool, u8)> {
     match val {
         0..=0x1F => Some((false, val + 0x40)),
@@ -22,6 +24,7 @@ fn encode_a(val: u8) -> Option<(bool, u8)> {
     }
 }
 
+/// Encode a characters using Mode B if possible.
 fn encode_b(val: u8) -> Option<(bool, u8)> {
     match val {
         b' '..=0x7F => Some((false, val - b' ')),
@@ -38,6 +41,7 @@ enum Mode {
 }
 
 impl Mode {
+    /// Get pattern index for switching to this mode.
     #[inline]
     fn switch(self) -> u8 {
         match self {
@@ -86,6 +90,7 @@ impl Encodation {
 }
 
 impl Encodation {
+    #[inline]
     fn push<const N: usize>(mut self, symbols: [u8; N]) -> Self {
         for symbol in symbols {
             self.symbols.push(symbol);
@@ -104,7 +109,7 @@ fn eat_double_digits<'a>(mut bytes: &'a [u8], encs: &mut [Encodation]) -> &'a [u
     bytes
 }
 
-fn c_start(mut bytes: &[u8]) -> Option<Encodation> {
+fn maybe_c_start(mut bytes: &[u8]) -> Option<Encodation> {
     match bytes {
         [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9'] => {
             Some(Encodation::new(Mode::C).push([(c1 - b'0') * 10 + (c2 - b'0')]))
@@ -129,7 +134,7 @@ pub(super) fn encode_as_indices(mut bytes: &[u8]) -> Vec<u8> {
     let mut head = Vec::new();
 
     let mut candidates = Vec::new();
-    if let Some(c) = c_start(bytes) {
+    if let Some(c) = maybe_c_start(bytes) {
         let eaten = (c.symbols.len() - 1) * 2;
         candidates.push(c);
         bytes = &bytes[eaten..];
@@ -168,7 +173,7 @@ pub(super) fn encode_as_indices(mut bytes: &[u8]) -> Vec<u8> {
         debug_assert!(new_candidates.is_empty());
 
         // check if a switch to C is necessary,
-        // candidates contains either only candidates in mode C or only ones in A or B
+        // `candidates` contains either only candidates in mode C or only ones in A or B
         if candidates[0].mode != Mode::C {
             match *bytes {
                 // for two digits at the end of data it is advantageous
@@ -328,6 +333,163 @@ pub(super) fn encode_as_indices(mut bytes: &[u8]) -> Vec<u8> {
     head
 }
 
+pub(super) fn encode_as_indices_fast(mut bytes: &[u8]) -> Vec<u8> {
+    #[derive(PartialEq, Eq)]
+    enum CharacterType {
+        Lower,
+        Control,
+    }
+
+    fn next(bytes: &[u8]) -> CharacterType {
+        for byte in bytes.iter().cloned() {
+            let byte = if byte >= 128 { byte - 128 } else { byte };
+            match byte {
+                0x00..=0x1A => return CharacterType::Control,
+                0x60..=0x7F => return CharacterType::Lower,
+                _ => (),
+            }
+        }
+        CharacterType::Lower
+    }
+
+    fn a_or_b_heuristic(bytes: &[u8]) -> Mode {
+        match next(bytes) {
+            CharacterType::Control => Mode::A,
+            CharacterType::Lower => Mode::B,
+        }
+    }
+
+    let mut enc = match bytes {
+        [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9'] => {
+            return Encodation::new(Mode::C)
+                .push([(c1 - b'0') * 10 + (c2 - b'0')])
+                .symbols;
+        }
+        [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9', c3 @ b'0'..=b'9', c4 @ b'0'..=b'9', ..] => {
+            let mut enc = Encodation::new(Mode::C).push([
+                (c1 - b'0') * 10 + (c2 - b'0'),
+                (c3 - b'0') * 10 + (c4 - b'0'),
+            ]);
+            bytes = &bytes[4..];
+            while let [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9'] = bytes {
+                enc.symbols.push((c1 - b'0') * 10 + (c2 - b'0'));
+                bytes = &bytes[2..];
+            }
+            enc
+        }
+        _ => Encodation::new(a_or_b_heuristic(bytes)),
+    };
+    while !bytes.is_empty() {
+        match (enc.latin, bytes) {
+            // in latin mode it is advantageous to switch for even two digits
+            (true, [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9', ..]) => {
+                enc.switch(Mode::C);
+                enc.symbols.push((c1 - b'0') * 10 + (c2 - b'0'));
+                bytes = &bytes[2..];
+                while let [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9'] = bytes {
+                    enc.symbols.push((c1 - b'0') * 10 + (c2 - b'0'));
+                    bytes = &bytes[2..];
+                }
+                if bytes.is_empty() {
+                    break;
+                }
+            }
+            (_, [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9', c3 @ b'0'..=b'9', c4 @ b'0'..=b'9', ..]) => {
+                debug_assert_ne!(enc.mode, Mode::C);
+                enc.switch(Mode::C);
+                enc.symbols.push((c1 - b'0') * 10 + (c2 - b'0'));
+                enc.symbols.push((c3 - b'0') * 10 + (c4 - b'0'));
+                bytes = &bytes[4..];
+                while let [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9'] = bytes {
+                    enc.symbols.push((c1 - b'0') * 10 + (c2 - b'0'));
+                    bytes = &bytes[2..];
+                }
+                if bytes.is_empty() {
+                    break;
+                }
+            }
+            _ => (),
+        }
+        let byte = bytes[0];
+        let (latin, byte) = if byte >= 128 {
+            (true, byte - 128)
+        } else {
+            (false, byte)
+        };
+        let pos = enc.symbols.len();
+        match enc.mode {
+            Mode::A => match byte {
+                0x00..=0x1A => enc.symbols.push(byte + 0x40),
+                0x20..=0x5F => enc.symbols.push(byte - b' '),
+                0x60..=0x7F => {
+                    enc = match next(&bytes[1..]) {
+                        CharacterType::Control => enc.push([SHIFT_MODE]),
+                        CharacterType::Lower => {
+                            enc.switch(Mode::B);
+                            enc
+                        }
+                    }
+                    .push([byte - b' ']);
+                }
+                _ => unreachable!(),
+            },
+            Mode::B => match byte {
+                0x20..=0x7F => enc.symbols.push(byte - b' '),
+                0x00..=0x1A => {
+                    enc = match next(&bytes[1..]) {
+                        CharacterType::Lower => enc.push([SHIFT_MODE]),
+                        CharacterType::Control => {
+                            enc.switch(Mode::A);
+                            enc
+                        }
+                    }
+                    .push([byte + 0x40]);
+                }
+                _ => unreachable!(),
+            },
+            Mode::C => {
+                enc.switch(a_or_b_heuristic(bytes));
+                continue;
+            }
+        };
+        bytes = &bytes[1..];
+
+        #[inline]
+        fn count(mut bytes: &[u8], range: std::ops::RangeInclusive<u8>) -> (bool, usize) {
+            let mut n = 0;
+            while !bytes.is_empty() && n < 4 {
+                if let [b'0'..=b'9', b'0'..=b'9', ..] = bytes {
+                    bytes = &bytes[2..];
+                    continue;
+                }
+                if !range.contains(&bytes[0]) {
+                    break;
+                }
+                n += 1;
+                bytes = &bytes[1..];
+            }
+            (bytes.is_empty(), n)
+        }
+
+        if latin != enc.latin {
+            enc.symbols.insert(pos, enc.mode.switch());
+            // we switch for 4 (2 at the end) consecutive characters, otherwise latch
+            let switch = if enc.latin {
+                // switching back to normal
+                matches!(count(bytes, 0..=127), (true, 2..=4) | (false, 4))
+            } else {
+                // switching to latin
+                matches!(count(bytes, 128..=255), (true, 2..=4) | (false, 4))
+            };
+            if switch {
+                enc.symbols.insert(pos, enc.mode.switch());
+                enc.latin = latin;
+            }
+        }
+    }
+    enc.symbols
+}
+
 pub(super) fn bits_to_modules(mut bits: u16) -> Vec<Module> {
     let mut modules = Vec::with_capacity(3);
     while bits != 0 {
@@ -423,7 +585,7 @@ fn test_latin_switch_cross_c1() {
 #[test]
 fn test_latin_switch_cross_c2() {
     assert_eq!(
-        encode_as_indices(b"\x00\x8000000001\x80\x81\x82"),
+        encode_as_indices(b"\x00\x8012345678\x80\x81\x82"),
         vec![
             START_A,
             b'\x00' + 0x40,
@@ -431,10 +593,10 @@ fn test_latin_switch_cross_c2() {
             SWITCH_A,
             0x40,
             SWITCH_C,
-            0,
-            0,
-            0,
-            1,
+            12,
+            34,
+            56,
+            78,
             SWITCH_A,
             0x40,
             0x41,
@@ -470,4 +632,250 @@ fn test_digit_start() {
     }
 
     assert_eq!(encode_as_indices(b"99").len(), 2);
+}
+
+#[test]
+fn test_encoder_start_a() {
+    assert_eq!(
+        encode_as_indices(b"\x01A"),
+        vec![START_A, 0x41, b'A' - b' ']
+    );
+
+    // fast encoder
+    assert_eq!(
+        encode_as_indices_fast(b"\x01A"),
+        vec![START_A, 0x41, b'A' - b' ']
+    );
+}
+
+#[test]
+fn test_encoder_start_b() {
+    assert_eq!(encode_as_indices(b"").len(), 1);
+
+    // fast encoder
+    assert_eq!(encode_as_indices_fast(b""), vec![START_B]);
+}
+
+#[test]
+fn test_encoder_start_c() {
+    assert_eq!(encode_as_indices(b"45"), vec![START_C, 45]);
+    let out = encode_as_indices(b"45 ");
+    assert!([START_A, START_B].contains(&out[0]));
+    assert_eq!(out, vec![out[0], b'4' - b' ', b'5' - b' ', 0],);
+    assert_eq!(encode_as_indices(b"453289"), vec![START_C, 45, 32, 89]);
+
+    // fast encoder
+    assert_eq!(encode_as_indices_fast(b"45"), vec![START_C, 45]);
+    assert_eq!(
+        encode_as_indices_fast(b"45 "),
+        vec![START_B, b'4' - b' ', b'5' - b' ', 0],
+    );
+    assert_eq!(encode_as_indices_fast(b"453289"), vec![START_C, 45, 32, 89]);
+}
+
+#[test]
+fn test_encoder_latch_a() {
+    assert_eq!(
+        encode_as_indices(b"\x01~\x02A"),
+        vec![START_A, 0x41, SHIFT_MODE, b'~' - b' ', 0x42, b'A' - b' '],
+    );
+
+    // fast encoder
+    assert_eq!(
+        encode_as_indices_fast(b"\x01~\x02A"),
+        vec![START_A, 0x41, SHIFT_MODE, b'~' - b' ', 0x42, b'A' - b' '],
+    );
+}
+
+#[test]
+fn test_encoder_latch_b() {
+    assert_eq!(
+        encode_as_indices(b"a\x05aA"),
+        vec![
+            START_B,
+            b'a' - b' ',
+            SHIFT_MODE,
+            0x45,
+            b'a' - b' ',
+            b'A' - b' '
+        ],
+    );
+
+    // fast encoder
+    assert_eq!(
+        encode_as_indices_fast(b"a\x05aA"),
+        vec![
+            START_B,
+            b'a' - b' ',
+            SHIFT_MODE,
+            0x45,
+            b'a' - b' ',
+            b'A' - b' '
+        ],
+    );
+}
+
+#[test]
+fn test_uneven_c() {
+    assert_eq!(
+        encode_as_indices(b"12343Aa"),
+        vec![
+            START_C,
+            12,
+            34,
+            SWITCH_B,
+            b'3' - b' ',
+            b'A' - b' ',
+            b'a' - b' ',
+        ],
+    );
+
+    // fast encoder
+    assert_eq!(
+        encode_as_indices_fast(b"12343Aa"),
+        vec![
+            START_C,
+            12,
+            34,
+            SWITCH_B,
+            b'3' - b' ',
+            b'A' - b' ',
+            b'a' - b' ',
+        ],
+    );
+}
+
+#[test]
+fn test_four_digits() {
+    assert_eq!(
+        encode_as_indices(b"a9876"),
+        vec![START_B, b'a' - b' ', SWITCH_C, 98, 76],
+    );
+    assert_eq!(
+        encode_as_indices(b"a9876X\n"),
+        vec![
+            START_B,
+            b'a' - b' ',
+            SWITCH_C,
+            98,
+            76,
+            SWITCH_A,
+            b'X' - b' ',
+            b'\n' + 0x40,
+        ],
+    );
+
+    // fast encoder
+    assert_eq!(
+        encode_as_indices_fast(b"a9876"),
+        vec![START_B, b'a' - b' ', SWITCH_C, 98, 76],
+    );
+    assert_eq!(
+        encode_as_indices_fast(b"a9876X\n"),
+        vec![
+            START_B,
+            b'a' - b' ',
+            SWITCH_C,
+            98,
+            76,
+            SWITCH_A,
+            b'X' - b' ',
+            b'\n' + 0x40,
+        ],
+    );
+}
+
+#[test]
+fn test_alternating() {
+    let msg = b"~\x00\x00~\x00\x00";
+    assert_eq!(encode_as_indices(msg).len(), 9);
+    assert_eq!(
+        encode_as_indices_fast(msg),
+        vec![
+            START_B,
+            b'~' - b' ',
+            SWITCH_A,
+            0x40,
+            0x40,
+            SHIFT_MODE,
+            b'~' - b' ',
+            0x40,
+            0x40,
+        ],
+    );
+}
+
+#[test]
+fn test_latin_latch() {
+    let msg = b" \x80\x00";
+    assert_eq!(
+        encode_as_indices(msg),
+        vec![START_A, 0, SWITCH_A, 0x40, 0x40]
+    );
+
+    // fast encoder
+    assert_eq!(
+        encode_as_indices_fast(msg),
+        vec![START_A, 0, SWITCH_A, 0x40, 0x40]
+    );
+}
+
+#[test]
+fn test_latin_switch_with_digits_hard() {
+    let msg = b" \x80\x9035\xFF12\xF0";
+    assert_eq!(
+        encode_as_indices(msg),
+        vec![
+            START_A,
+            0,
+            SWITCH_A,
+            SWITCH_A,
+            0x40,
+            0x50,
+            SWITCH_C,
+            35,
+            SWITCH_B,
+            0x7F - b' ',
+            SWITCH_C,
+            12,
+            SWITCH_B,
+            0x70 - b' ',
+        ]
+    );
+
+    // fast encoder
+    assert_eq!(
+        encode_as_indices_fast(msg),
+        vec![
+            START_A,
+            0,
+            SWITCH_A,
+            SWITCH_A,
+            0x40,
+            0x50,
+            SWITCH_C,
+            35,
+            SWITCH_B,
+            0x7F - b' ',
+            SWITCH_C,
+            12,
+            SWITCH_B,
+            0x70 - b' ',
+        ]
+    );
+}
+
+#[test]
+fn test_latin_switch_ending_with_two_digits() {
+    let msg = b" \x80\x90\xA035";
+    assert_eq!(
+        encode_as_indices(msg),
+        vec![START_A, 0, SWITCH_A, SWITCH_A, 0x40, 0x50, 0, SWITCH_C, 35],
+    );
+
+    // fast encoder
+    assert_eq!(
+        encode_as_indices_fast(msg),
+        vec![START_A, 0, SWITCH_A, SWITCH_A, 0x40, 0x50, 0, SWITCH_C, 35],
+    );
 }
