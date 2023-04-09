@@ -11,6 +11,6 @@ ISO/IEC 15417:2007.
   <img src="src/code128.png" alt="Code 128 encoding 'This is a Code 128'">
 </p>
 
-To achieve a minimal encoding size a dynamic programming approach is used. 
-There is also support for encoding the full 256 bit range, for compatibility it
-is recommended to stay within printable ASCII.
+To achieve a minimal encoding size a dynamic programming approach is used. The
+full 256 bit range can be encoded. For compatibility it is recommended to stay
+within printable ASCII though.

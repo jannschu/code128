@@ -2,6 +2,8 @@
 //! as defined in ISO/IEC 15417:2007.
 //!
 //! To achieve a minimal encoding size a dynamic programming approach is used.
+//! The full 256 bit range can be encoded. For compatibility it is recommended
+//! to stay within printable ASCII though.
 //!
 //! ## Example
 //!
@@ -15,13 +17,14 @@
 //!
 //! ## Charsets
 //!
-//! For best compatibility it is recommended to only encode printable ASCII
-//! characters.
+//! For best compatibility it is recommended to only encode printable
+//! [ASCII](https://en.wikipedia.org/wiki/ASCII#Character_set)
+//! characters, i.e. `0x20` (space) to `0x7E` (tilde).
 //!
 //! Code 128 interprets the range `0x00` to `0x7F` as ASCII, and `0xA0` to
 //! `0xFF` as [ISO/IEC 8859-1](https://en.wikipedia.org/wiki/ISO/IEC_8859-1)
 //! (Latin 1). The remaining range from `0x80` to `0x9F` can also be encoded
-//! but has no assigned meaning.
+//! but has no visual representation.
 //!
 //! In the real world most implementations only handle `0x00` to `0x7F`, or
 //! interpret results as UTF-8, although that is not covered by the standard.
@@ -29,9 +32,10 @@
 //! possible.
 mod decode;
 mod encode;
+mod latin1;
 mod unicode;
 
-pub use decode::{decode, DecodingError};
+pub use decode::{decode, decode_str, DecodingError};
 
 pub use unicode::modules_to_blocks;
 
@@ -105,6 +109,16 @@ impl Code128 {
         Self { indices }
     }
 
+    /// Encode the string as Code 128 using Latin 1.
+    ///
+    /// The functions retunrs `None` if the string includes characters not
+    /// included in Latin 1.
+    ///
+    /// The control charactes of ASCII, `0x00` to `0x19`, are also encoded.
+    pub fn encode_str(s: &str) -> Option<Self> {
+        latin1::utf8_to_latin1(s).map(|s| Self::encode(&s))
+    }
+
     /// Get the sequence of modules this Code 128 consists of.
     pub fn modules(&self) -> impl Iterator<Item = Module> + '_ {
         self.indices
@@ -165,4 +179,11 @@ fn test_256() {
         let modules: Vec<Module> = code.modules().collect();
         assert_eq!(decode(&modules), Ok(vec![x]));
     }
+}
+
+#[test]
+fn test_string_encoding_example() {
+    let code = Code128::encode_str("Füße").unwrap();
+    let modules: Vec<_> = code.modules().collect();
+    assert_eq!(decode_str(&modules), Ok("Füße".into()));
 }

@@ -29,6 +29,9 @@ pub enum DecodingError {
     /// A symbol occured in a mode that did not support it or is not implemeneted.
     #[error("unexpected character {0:x}")]
     Unexpected(u8),
+    /// After decoding the data the conversion from Latin 1 failed.
+    #[error("characters not covered by Latin 1 were part of this symbol")]
+    Latin1,
 }
 
 pub(crate) fn lookup(pattern: u16) -> Result<u8, DecodingError> {
@@ -246,6 +249,14 @@ pub fn decode(modules: &[Module]) -> Result<Vec<u8>, DecodingError> {
         }
     }
     Ok(data)
+}
+
+/// Decode the modules and interpret the data as Latin 1.
+///
+/// The control charactes of ASCII, `0x00` to `0x19`, are also decoded.
+pub fn decode_str(modules: &[Module]) -> Result<String, DecodingError> {
+    let data = decode(modules)?;
+    crate::latin1::latin1_to_utf8(&data).ok_or(DecodingError::Latin1)
 }
 
 #[test]
