@@ -29,7 +29,7 @@
 //! In the real world most implementations only handle `0x00` to `0x7F`, or
 //! interpret results as UTF-8, although that is not covered by the standard.
 //! However, if you are in control of encoding and decoding this is technically
-//! possible.
+//! possible and maybe even a contemporary choice.
 mod decode;
 mod encode;
 mod latin1;
@@ -103,10 +103,7 @@ impl Code128 {
     ///
     /// See the [module documentation](crate) for hints on charsets.
     pub fn encode(data: &[u8]) -> Self {
-        let mut indices = encode::encode_as_indices(data);
-        indices.push(checksum(indices.iter().cloned()));
-        indices.push(STOP);
-        Self { indices }
+        Code128Builder::default().encode(data)
     }
 
     /// Encode the string as Code 128 using Latin 1.
@@ -115,8 +112,8 @@ impl Code128 {
     /// included in Latin 1.
     ///
     /// The control charactes of ASCII, `0x00` to `0x19`, are also encoded.
-    pub fn encode_str(s: &str) -> Option<Self> {
-        latin1::utf8_to_latin1(s).map(|s| Self::encode(&s))
+    pub fn encode_str(text: &str) -> Option<Self> {
+        Code128Builder::default().encode_str(text)
     }
 
     /// Get the sequence of modules this Code 128 consists of.
@@ -135,6 +132,58 @@ impl Code128 {
     /// Whether this Code 128 encodes empty data.
     pub fn is_empty(&self) -> bool {
         self.indices.len() == 3
+    }
+}
+
+#[doc(hidden)]
+#[derive(Copy, Clone)]
+pub enum Encoder {
+    Mixed,
+    DynamicProgramming,
+}
+
+/// Builder for encoding a Code 128 with more control.
+#[doc(hidden)]
+pub struct Code128Builder {
+    encoder: Encoder,
+}
+
+impl Code128Builder {
+    /// Which encoding should be used.
+    pub fn with_encoder(self, encoder: Encoder) -> Self {
+        Self { encoder }
+    }
+
+    /// Encode the bytes as Code 128.
+    ///
+    /// See the [module documentation](crate) for hints on charsets.
+    pub fn encode(self, data: &[u8]) -> Code128 {
+        let mut indices = match self.encoder {
+            Encoder::Mixed => encode::encode_as_indices(data),
+            Encoder::DynamicProgramming => encode::encode_as_indices_dp(data, vec![]),
+        };
+        indices.push(checksum(indices.iter().cloned()));
+        indices.push(STOP);
+        Code128 { indices }
+    }
+
+    /// Encode the string as Code 128 using Latin 1.
+    ///
+    /// The functions returns `None` if the string includes characters not
+    /// included in Latin 1.
+    ///
+    /// The control charactes of ASCII, `0x00` to `0x19`, are also encoded.
+    pub fn encode_str(self, text: &str) -> Option<Code128> {
+        latin1::utf8_to_latin1(text).map(|data| self.encode(&data))
+    }
+}
+
+#[allow(clippy::derivable_impls)]
+impl Default for Code128Builder {
+    fn default() -> Self {
+        Self {
+            encoder: Encoder::Mixed,
+        }
     }
 }
 

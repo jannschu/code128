@@ -37,7 +37,7 @@ impl Buffer {
 /// # use code128::{Code128, modules_to_blocks};
 /// assert_eq!(
 ///     modules_to_blocks(Code128::encode(b"<3").modules()),
-///     "     █▐  ▌▐█ █▐ █ ▌█▌▐ ▌ ▐▌█ ▐█▐▐▌     ",
+///     "     █▐ ▌ ▐█ █▐ █ ▌█▌▐  ▌█ █ ▐█▐▐▌     ",
 /// );
 /// ```
 pub fn modules_to_blocks(modules: impl IntoIterator<Item = Module>) -> String {

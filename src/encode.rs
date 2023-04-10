@@ -62,7 +62,7 @@ impl Mode {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-struct Encodation {
+pub(super) struct Encodation {
     mode: Mode,
     latin: bool,
     symbols: Vec<u8>,
@@ -130,20 +130,30 @@ fn maybe_c_start(mut bytes: &[u8]) -> Option<Encodation> {
     }
 }
 
-pub(super) fn encode_as_indices(mut bytes: &[u8]) -> Vec<u8> {
-    let mut head = Vec::new();
-
-    let mut candidates = Vec::new();
-    if let Some(c) = maybe_c_start(bytes) {
-        let eaten = (c.symbols.len() - 1) * 2;
-        candidates.push(c);
-        bytes = &bytes[eaten..];
+pub(super) fn encode_as_indices(bytes: &[u8]) -> Vec<u8> {
+    let (enc, rest) = encode_as_indices_look_ahead(bytes);
+    if rest.is_empty() {
+        enc.symbols
     } else {
-        candidates.clear();
-        candidates.push(Encodation::new(Mode::A));
-        candidates.push(Encodation::new(Mode::B));
+        encode_as_indices_dp(rest, vec![enc])
     }
+}
 
+pub(super) fn encode_as_indices_dp(mut bytes: &[u8], mut candidates: Vec<Encodation>) -> Vec<u8> {
+    let mut head = Vec::new();
+    if candidates.is_empty() {
+        if let Some(c) = maybe_c_start(bytes) {
+            let eaten = (c.symbols.len() - 1) * 2;
+            candidates.push(c);
+            bytes = &bytes[eaten..];
+        } else {
+            candidates.clear();
+            candidates.push(Encodation::new(Mode::A));
+            candidates.push(Encodation::new(Mode::B));
+        }
+    } else if candidates.len() == 1 {
+        head.append(&mut candidates[0].symbols);
+    }
     let mut new_candidates = Vec::new();
 
     macro_rules! enplace_new_candidates {
@@ -343,7 +353,7 @@ pub(super) fn encode_as_indices(mut bytes: &[u8]) -> Vec<u8> {
     head
 }
 
-pub(super) fn encode_as_indices_fast(mut bytes: &[u8]) -> Vec<u8> {
+fn encode_as_indices_look_ahead(mut bytes: &[u8]) -> (Encodation, &[u8]) {
     #[derive(PartialEq, Eq)]
     enum CharacterType {
         Lower,
@@ -371,9 +381,10 @@ pub(super) fn encode_as_indices_fast(mut bytes: &[u8]) -> Vec<u8> {
 
     let mut enc = match bytes {
         [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9'] => {
-            return Encodation::new(Mode::C)
-                .push([(c1 - b'0') * 10 + (c2 - b'0')])
-                .symbols;
+            return (
+                Encodation::new(Mode::C).push([(c1 - b'0') * 10 + (c2 - b'0')]),
+                &[],
+            );
         }
         [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9', c3 @ b'0'..=b'9', c4 @ b'0'..=b'9', ..] => {
             let mut enc = Encodation::new(Mode::C).push([
@@ -391,43 +402,25 @@ pub(super) fn encode_as_indices_fast(mut bytes: &[u8]) -> Vec<u8> {
     };
 
     while !bytes.is_empty() {
-        match (enc.latin, bytes) {
-            // in latin mode it is advantageous to switch for even two digits
-            (true, [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9', ..]) => {
-                enc.switch(Mode::C);
+        if let [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9', c3 @ b'0'..=b'9', c4 @ b'0'..=b'9', ..] = bytes
+        {
+            debug_assert_ne!(enc.mode, Mode::C);
+            enc.switch(Mode::C);
+            enc.symbols.push((c1 - b'0') * 10 + (c2 - b'0'));
+            enc.symbols.push((c3 - b'0') * 10 + (c4 - b'0'));
+            bytes = &bytes[4..];
+            while let [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9', ..] = bytes {
                 enc.symbols.push((c1 - b'0') * 10 + (c2 - b'0'));
                 bytes = &bytes[2..];
-                while let [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9', ..] = bytes {
-                    enc.symbols.push((c1 - b'0') * 10 + (c2 - b'0'));
-                    bytes = &bytes[2..];
-                }
-                if bytes.is_empty() {
-                    break;
-                }
             }
-            (_, [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9', c3 @ b'0'..=b'9', c4 @ b'0'..=b'9', ..]) => {
-                debug_assert_ne!(enc.mode, Mode::C);
-                enc.switch(Mode::C);
-                enc.symbols.push((c1 - b'0') * 10 + (c2 - b'0'));
-                enc.symbols.push((c3 - b'0') * 10 + (c4 - b'0'));
-                bytes = &bytes[4..];
-                while let [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9', ..] = bytes {
-                    enc.symbols.push((c1 - b'0') * 10 + (c2 - b'0'));
-                    bytes = &bytes[2..];
-                }
-                if bytes.is_empty() {
-                    break;
-                }
+            if bytes.is_empty() {
+                break;
             }
-            _ => (),
         }
         let byte = bytes[0];
-        let (latin, byte) = if byte >= 128 {
-            (true, byte - 128)
-        } else {
-            (false, byte)
-        };
-        let pos = enc.symbols.len();
+        if byte >= 128 {
+            break;
+        }
         match enc.mode {
             Mode::A => match byte {
                 0x00..=0x1F => enc.symbols.push(byte + 0x40),
@@ -464,41 +457,8 @@ pub(super) fn encode_as_indices_fast(mut bytes: &[u8]) -> Vec<u8> {
             }
         };
         bytes = &bytes[1..];
-
-        #[inline]
-        fn count(mut bytes: &[u8], range: std::ops::RangeInclusive<u8>) -> (usize, usize) {
-            let mut n = 0;
-            while !bytes.is_empty() && n < 4 {
-                if let [b'0'..=b'9', b'0'..=b'9', ..] = bytes {
-                    bytes = &bytes[2..];
-                    continue;
-                }
-                if !range.contains(&bytes[0]) {
-                    break;
-                }
-                n += 1;
-                bytes = &bytes[1..];
-            }
-            (bytes.len(), n)
-        }
-
-        if latin != enc.latin {
-            enc.symbols.insert(pos, enc.mode.switch());
-            // we switch for 4 (2 at the end) consecutive characters, otherwise latch
-            let switch = if enc.latin {
-                // switching back to normal
-                matches!(count(bytes, 0..=127), (0, 2..=4) | (1, 3) | (1.., 4))
-            } else {
-                // switching to latin
-                matches!(count(bytes, 128..=255), (0, 2..=4) | (1, 3) | (1.., 4))
-            };
-            if switch {
-                enc.symbols.insert(pos, enc.mode.switch());
-                enc.latin = latin;
-            }
-        }
     }
-    enc.symbols
+    (enc, bytes)
 }
 
 pub(super) fn bits_to_modules(mut bits: u16) -> Vec<Module> {
@@ -559,6 +519,7 @@ fn decode(indices: &[u8]) -> Result<Vec<u8>, crate::DecodingError> {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 fn debug_indices(indices: &[u8]) {
     use std::fmt::Write;
 
@@ -607,6 +568,13 @@ fn debug_indices(indices: &[u8]) {
     println!("{}", out);
 }
 
+#[cfg(test)]
+fn encode_look_ahead(bytes: &[u8]) -> Vec<u8> {
+    let (enc, rest) = encode_as_indices_look_ahead(bytes);
+    assert_eq!(rest, &[]);
+    enc.symbols
+}
+
 #[test]
 fn test_patterns() {
     for (i, pattern) in PATTERNS.iter().cloned().enumerate() {
@@ -617,7 +585,7 @@ fn test_patterns() {
 #[test]
 fn test_switch_instead_of_shift() {
     assert_eq!(
-        encode_as_indices(b"\nab"),
+        encode_as_indices_dp(b"\nab", vec![]),
         vec![START_A, b'\n' + 0x40, SWITCH_B, b'a' - b' ', b'b' - b' '],
     )
 }
@@ -625,7 +593,7 @@ fn test_switch_instead_of_shift() {
 #[test]
 fn test_latin_shift() {
     assert_eq!(
-        encode_as_indices(b"\x00\x80"),
+        encode_as_indices_dp(b"\x00\x80", vec![]),
         vec![START_A, b'\x00' + 0x40, SWITCH_A, 0x40],
     )
 }
@@ -633,7 +601,7 @@ fn test_latin_shift() {
 #[test]
 fn test_latin_switch() {
     assert_eq!(
-        encode_as_indices(b"\x00\x80\x81\x82"),
+        encode_as_indices_dp(b"\x00\x80\x81\x82", vec![]),
         vec![
             START_A,
             b'\x00' + 0x40,
@@ -649,7 +617,7 @@ fn test_latin_switch() {
 #[test]
 fn test_latin_switch_cross_c1() {
     assert_eq!(
-        encode_as_indices(b"\x80\x80\x8000\x80"),
+        encode_as_indices_dp(b"\x80\x80\x8000\x80", vec![]),
         vec![START_A, SWITCH_A, SWITCH_A, 0x40, 0x40, 0x40, SWITCH_C, 0, SWITCH_A, 0x40],
     )
 }
@@ -657,7 +625,7 @@ fn test_latin_switch_cross_c1() {
 #[test]
 fn test_latin_switch_cross_c2() {
     assert_eq!(
-        encode_as_indices(b"\x00\x8012345678\x80\x81\x82"),
+        encode_as_indices_dp(b"\x00\x8012345678\x80\x81\x82", vec![]),
         vec![
             START_A,
             b'\x00' + 0x40,
@@ -680,7 +648,7 @@ fn test_latin_switch_cross_c2() {
 #[test]
 fn test_latin_shift_back() {
     assert_eq!(
-        encode_as_indices(b"|\xF0\xF1\xF21"),
+        encode_as_indices_dp(b"|\xF0\xF1\xF21", vec![]),
         vec![
             START_B,
             b'|' - b' ',
@@ -698,63 +666,66 @@ fn test_latin_shift_back() {
 #[test]
 fn test_digit_start() {
     for msg in [b"000", b"00a"] {
-        let indices = encode_as_indices(msg);
+        let indices = encode_as_indices_dp(msg, vec![]);
         assert_ne!(indices[0], START_C);
         assert_eq!(indices.len(), 4);
     }
 
-    assert_eq!(encode_as_indices(b"99").len(), 2);
+    assert_eq!(encode_as_indices_dp(b"99", vec![]).len(), 2);
 }
 
 #[test]
 fn test_encoder_start_a() {
     assert_eq!(
-        encode_as_indices(b"\x01A"),
+        encode_as_indices_dp(b"\x01A", vec![]),
         vec![START_A, 0x41, b'A' - b' ']
     );
 
-    // fast encoder
+    // lookahead encoder
     assert_eq!(
-        encode_as_indices_fast(b"\x01A"),
-        vec![START_A, 0x41, b'A' - b' ']
+        encode_look_ahead(b"\x01A"),
+        vec![START_A, 0x41, b'A' - b' '],
     );
 }
 
 #[test]
 fn test_encoder_start_b() {
-    assert_eq!(encode_as_indices(b"").len(), 1);
+    assert_eq!(encode_as_indices_dp(b"", vec![]).len(), 1);
 
-    // fast encoder
-    assert_eq!(encode_as_indices_fast(b""), vec![START_B]);
+    // lookahead encoder
+    assert_eq!(encode_look_ahead(b""), vec![START_B]);
 }
 
 #[test]
 fn test_encoder_start_c() {
-    assert_eq!(encode_as_indices(b"45"), vec![START_C, 45]);
-    let out = encode_as_indices(b"45 ");
+    assert_eq!(encode_as_indices_dp(b"45", vec![]), vec![START_C, 45]);
+    let out = encode_as_indices_dp(b"45 ", vec![]);
     assert!([START_A, START_B].contains(&out[0]));
     assert_eq!(out, vec![out[0], b'4' - b' ', b'5' - b' ', 0],);
-    assert_eq!(encode_as_indices(b"453289"), vec![START_C, 45, 32, 89]);
-
-    // fast encoder
-    assert_eq!(encode_as_indices_fast(b"45"), vec![START_C, 45]);
     assert_eq!(
-        encode_as_indices_fast(b"45 "),
+        encode_as_indices_dp(b"453289", vec![]),
+        vec![START_C, 45, 32, 89]
+    );
+
+    // lookahead encoder
+    assert_eq!(encode_look_ahead(b"45"), vec![START_C, 45]);
+    assert_eq!(
+        encode_look_ahead(b"45 "),
         vec![START_B, b'4' - b' ', b'5' - b' ', 0],
     );
-    assert_eq!(encode_as_indices_fast(b"453289"), vec![START_C, 45, 32, 89]);
+    assert_eq!(encode_look_ahead(b"453289"), vec![START_C, 45, 32, 89]);
 }
 
 #[test]
 fn test_encoder_latch_a() {
     assert_eq!(
-        encode_as_indices(b"\x01~\x02A"),
+        encode_as_indices_dp(b"\x01~\x02A", vec![]),
         vec![START_A, 0x41, SHIFT_MODE, b'~' - b' ', 0x42, b'A' - b' '],
     );
 
-    // fast encoder
+    // lookahead encoder
     assert_eq!(
-        encode_as_indices_fast(b"\x01~\x02A"),
+        encode_look_ahead(b"\x01~\x02A"),
         vec![START_A, 0x41, SHIFT_MODE, b'~' - b' ', 0x42, b'A' - b' '],
     );
 }
@@ -762,7 +733,7 @@ fn test_encoder_latch_a() {
 #[test]
 fn test_encoder_latch_b() {
     assert_eq!(
-        encode_as_indices(b"a\x05aA"),
+        encode_as_indices_dp(b"a\x05aA", vec![]),
         vec![
             START_B,
             b'a' - b' ',
@@ -773,9 +744,9 @@ fn test_encoder_latch_b() {
         ],
     );
 
-    // fast encoder
+    // lookahead encoder
     assert_eq!(
-        encode_as_indices_fast(b"a\x05aA"),
+        encode_look_ahead(b"a\x05aA"),
         vec![
             START_B,
             b'a' - b' ',
@@ -790,7 +761,7 @@ fn test_encoder_latch_b() {
 #[test]
 fn test_uneven_c() {
     assert_eq!(
-        encode_as_indices(b"12343Aa"),
+        encode_as_indices_dp(b"12343Aa", vec![]),
         vec![
             START_C,
             12,
@@ -802,9 +773,9 @@ fn test_uneven_c() {
         ],
     );
 
-    // fast encoder
+    // lookahead encoder
     assert_eq!(
-        encode_as_indices_fast(b"12343Aa"),
+        encode_look_ahead(b"12343Aa"),
         vec![
             START_C,
             12,
@@ -820,11 +791,11 @@ fn test_uneven_c() {
 #[test]
 fn test_four_digits() {
     assert_eq!(
-        encode_as_indices(b"a9876"),
+        encode_as_indices_dp(b"a9876", vec![]),
         vec![START_B, b'a' - b' ', SWITCH_C, 98, 76],
     );
     assert_eq!(
-        encode_as_indices(b"a9876X\n"),
+        encode_as_indices_dp(b"a9876X\n", vec![]),
         vec![
             START_B,
             b'a' - b' ',
@@ -837,13 +808,13 @@ fn test_four_digits() {
         ],
     );
 
-    // fast encoder
+    // lookahead encoder
     assert_eq!(
-        encode_as_indices_fast(b"a9876"),
+        encode_look_ahead(b"a9876"),
         vec![START_B, b'a' - b' ', SWITCH_C, 98, 76],
     );
     assert_eq!(
-        encode_as_indices_fast(b"a9876X\n"),
+        encode_look_ahead(b"a9876X\n"),
         vec![
             START_B,
             b'a' - b' ',
@@ -860,9 +831,9 @@ fn test_four_digits() {
 #[test]
 fn test_alternating() {
     let msg = b"~\x00\x00~\x00\x00";
-    assert_eq!(encode_as_indices(msg).len(), 9);
+    assert_eq!(encode_as_indices_dp(msg, vec![]).len(), 9);
     assert_eq!(
-        encode_as_indices_fast(msg),
+        encode_look_ahead(msg),
         vec![
             START_B,
             b'~' - b' ',
@@ -881,13 +852,13 @@ fn test_alternating() {
 fn test_latin_latch() {
     let msg = b" \x80\x00";
     assert_eq!(
-        encode_as_indices(msg),
+        encode_as_indices_dp(msg, vec![]),
         vec![START_A, 0, SWITCH_A, 0x40, 0x40]
     );
 
-    // fast encoder
+    // mixed encoder
     assert_eq!(
-        encode_as_indices_fast(msg),
+        encode_as_indices(msg),
         vec![START_A, 0, SWITCH_A, 0x40, 0x40]
     );
 }
@@ -896,7 +867,7 @@ fn test_latin_latch() {
 fn test_latin_switch_with_digits_hard() {
     let msg = b" \x80\x9035\xFF12\xF0";
     assert_eq!(
-        encode_as_indices(msg),
+        encode_as_indices_dp(msg, vec![]),
         vec![
             START_A,
             0,
@@ -915,9 +886,9 @@ fn test_latin_switch_with_digits_hard() {
         ]
     );
 
-    // fast encoder
+    // mxied encoder
     assert_eq!(
-        encode_as_indices_fast(msg),
+        encode_as_indices(msg),
         vec![
             START_A,
             0,
@@ -941,13 +912,13 @@ fn test_latin_switch_with_digits_hard() {
 fn test_latin_switch_ending_with_two_digits() {
     let msg = b" \x80\x90\xA035";
     assert_eq!(
-        encode_as_indices(msg),
+        encode_as_indices_dp(msg, vec![]),
         vec![START_A, 0, SWITCH_A, SWITCH_A, 0x40, 0x50, 0, SWITCH_C, 35],
     );
 
-    // fast encoder
+    // mixed encoder
     assert_eq!(
-        encode_as_indices_fast(msg),
+        encode_as_indices(msg),
         vec![START_A, 0, SWITCH_A, SWITCH_A, 0x40, 0x50, 0, SWITCH_C, 35],
     );
 }
@@ -956,13 +927,13 @@ fn test_latin_switch_ending_with_two_digits() {
 fn only_high() {
     let msg = b"\xFF\xFF\xFF";
     assert_eq!(
-        encode_as_indices(msg),
+        encode_as_indices_dp(msg, vec![]),
         vec![START_B, SWITCH_B, SWITCH_B, 95, 95, 95],
     );
 
-    // fast encoder
+    // mxied encoder
     assert_eq!(
-        encode_as_indices_fast(msg),
+        encode_as_indices(msg),
         vec![START_B, SWITCH_B, SWITCH_B, 95, 95, 95],
     );
 }
@@ -971,20 +942,20 @@ fn only_high() {
 fn test_latin_switch_end_of_data_edge_case() {
     let msg = b"\xff\xff\xff\xff\x00";
     assert_eq!(
-        encode_as_indices(msg),
+        encode_as_indices_dp(msg, vec![]),
         vec![START_B, SWITCH_B, SWITCH_B, 95, 95, 95, 95, SHIFT_MODE, SWITCH_A, 0x40],
     );
     assert_eq!(
-        encode_as_indices_fast(msg),
-        vec![START_B, SWITCH_B, SWITCH_B, 95, 95, 95, 95, SWITCH_B, SHIFT_MODE, 0x40],
+        encode_as_indices(msg),
+        vec![START_B, SWITCH_B, SWITCH_B, 95, 95, 95, 95, SHIFT_MODE, SWITCH_A, 0x40],
     );
 }
 
 #[test]
 fn test_controls() {
     let msg = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\x0c\r\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f";
-    let opt = encode_as_indices(msg);
-    let fast = encode_as_indices_fast(msg);
+    let opt = encode_as_indices_dp(msg, vec![]);
+    let fast = encode_as_indices(msg);
     let out = b"@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_";
     let mut out_enc = vec![START_A];
     out_enc.extend_from_slice(out);
@@ -992,8 +963,8 @@ fn test_controls() {
     assert_eq!(fast, out_enc);
 
     let msg = b"\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9a\x9b\x9c\x9d\x9e\x9f";
-    let opt = encode_as_indices(msg);
-    let fast = encode_as_indices_fast(msg);
+    let opt = encode_as_indices_dp(msg, vec![]);
+    let fast = encode_as_indices(msg);
     let out = b"@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_";
     let mut out_enc = vec![START_A, SWITCH_A, SWITCH_A];
     out_enc.extend_from_slice(out);
@@ -1004,8 +975,8 @@ fn test_controls() {
 #[test]
 fn test_only_digits() {
     let msg = b"6666684744";
-    let dynm = encode_as_indices(msg);
-    let fast = encode_as_indices_fast(msg);
+    let dynm = encode_as_indices_dp(msg, vec![]);
+    let fast = encode_look_ahead(msg);
     assert_eq!(decode(&dynm), Ok(msg.as_slice().into()));
     assert_eq!(decode(&fast), Ok(msg.as_slice().into()));
     assert_eq!(fast.len(), 6);
@@ -1015,8 +986,8 @@ fn test_only_digits() {
 #[test]
 fn test_many_digits() {
     let msg = b"a123456";
-    let dynm = encode_as_indices(msg);
-    let fast = encode_as_indices_fast(msg);
+    let dynm = encode_as_indices_dp(msg, vec![]);
+    let fast = encode_look_ahead(msg);
     assert_eq!(decode(&dynm), Ok(msg.as_slice().into()));
     assert_eq!(decode(&fast), Ok(msg.as_slice().into()));
     assert_eq!(fast.len(), 6);
@@ -1026,8 +997,8 @@ fn test_many_digits() {
 #[test]
 fn test_latin_two_digit_case_that_should_switch() {
     let msg = b"\xff\xff\xff\x00\xa0\xa0\x00\xff000\x00";
-    let dynm = encode_as_indices(msg);
-    let fast = encode_as_indices_fast(msg);
+    let dynm = encode_as_indices_dp(msg, vec![]);
+    let fast = encode_as_indices(msg);
     assert_eq!(decode(&dynm), Ok(msg.as_slice().into()));
     assert_eq!(decode(&fast), Ok(msg.as_slice().into()));
     assert_eq!(dynm.len(), 21);
