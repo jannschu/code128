@@ -74,7 +74,7 @@ pub struct Module {
 /// line" of the code and has a unitless width between one and four, as well
 /// as a free space after it, also sized between one and four.
 ///
-/// ## Psudo code for visualization
+/// ## Pseudo code for visualization
 ///
 /// Be aware that the standard demands a quiet zone of size 10 around the code.
 /// To compute the size of a block, multiply its width with the available space
@@ -111,7 +111,7 @@ impl Code128 {
     /// The functions returns `None` if the string includes characters not
     /// included in Latin 1.
     ///
-    /// The control charactes of ASCII, `0x00` to `0x19`, are also encoded.
+    /// The control characters of ASCII, `0x00` to `0x19`, are also encoded.
     pub fn encode_str(text: &str) -> Option<Self> {
         Code128Builder::default().encode_str(text)
     }
@@ -172,7 +172,7 @@ impl Code128Builder {
     /// The functions returns `None` if the string includes characters not
     /// included in Latin 1.
     ///
-    /// The control charactes of ASCII, `0x00` to `0x19`, are also encoded.
+    /// The control characters of ASCII, `0x00` to `0x19`, are also encoded.
     pub fn encode_str(self, text: &str) -> Option<Code128> {
         latin1::utf8_to_latin1(text).map(|data| self.encode(&data))
     }

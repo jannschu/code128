@@ -31,22 +31,22 @@ that ends in that charset. The details are a bit intricate but the result will
 be an optimal encodation.
 
 This dynamic programming based encoder was fuzzed using the astonishing
-[cargo fuzz](https://github.com/rust-fuzz/cargo-fuzz) and[LibFuzzer]
-(https://llvm.org/docs/LibFuzzer.html) project. During fuzzing the input was
-encoded and then decode which was checked to give us the identity function. This
-uncovered a few bugs.
+[cargo fuzz](https://github.com/rust-fuzz/cargo-fuzz) and
+[LibFuzzer](https://llvm.org/docs/LibFuzzer.html) project. During fuzzing the
+input was encoded and then decoded, which was checked to give us the input back.
+This uncovered a few bugs.
 
 For further verification the encoder as specified in ISO/IEC 15417 was
 implemented. Roughly speaking this encoder decides based on rules on the
 remaining data which character set should be chosen. These rules lead to a good
 but not optimal encoding size if input from the upper byte range (`0x80` to
 `0xFF`) shall be encoded. The rules were improved but that also made them
-harder to check and understand, and slower. Here again fuzzing was used to
-compare the rule based encoder with the dynamic programming encoder which again
+harder to check and understand, as well as slower. Here again fuzzing was used to
+compare the rule based encoder with the dynamic programming encoder, which again
 uncovered bugs in booth encoders and led to many test cases.
 
 To avoid an overcomplicated implementation the current encoder now uses the rule
 based encoder until an input from the upper byte range is seen at which point
-we switch to the dynmaic programming encoder. For inputs from `0x00` to `0x7F`
+we switch to the dynamic programming encoder. For inputs from `0x00` to `0x7F`
 this will give us the low memory footprint and good performance of the rule
 based encoder.

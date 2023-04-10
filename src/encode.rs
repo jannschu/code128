@@ -250,7 +250,7 @@ pub(super) fn encode_as_indices_dp(mut bytes: &[u8], mut candidates: Vec<Encodat
         bytes = &bytes[1..];
 
         for mut candidate in candidates.drain(..) {
-            // modes A and B are hanled symmetrically, we use a macro for these
+            // modes A and B are handled symmetrically, we use a macro for these
             macro_rules! handle_ab {
                 ($candidate:ident, $me:expr, ($latin:expr, $symbol:expr)) => {
                     if $candidate.latin == $latin {

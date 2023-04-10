@@ -6,7 +6,7 @@ use crate::Module;
 #[derive(Error, Debug, PartialEq)]
 pub enum DecodingError {
     /// A sequence of modules resulted in an unknown pattern.
-    #[error("pattern {0:b} not reconized")]
+    #[error("pattern {0:b} not recognized")]
     Pattern(u16),
     /// A module's width or spacing is not valid.
     #[error("modules are not valid")]
@@ -26,7 +26,7 @@ pub enum DecodingError {
     /// The code did not start with a mode signal.
     #[error("start char did not signal mode")]
     NoMode,
-    /// A symbol occured in a mode that did not support it or is not implemeneted.
+    /// A symbol occurred in a mode that did not support it or is not implemented.
     #[error("unexpected character {0:x}")]
     Unexpected(u8),
     /// After decoding the data the conversion from Latin 1 failed.
@@ -253,7 +253,7 @@ pub fn decode(modules: &[Module]) -> Result<Vec<u8>, DecodingError> {
 
 /// Decode the modules and interpret the data as Latin 1.
 ///
-/// The control charactes of ASCII, `0x00` to `0x19`, are also decoded.
+/// The control characters of ASCII, `0x00` to `0x19`, are also decoded.
 pub fn decode_str(modules: &[Module]) -> Result<String, DecodingError> {
     let data = decode(modules)?;
     crate::latin1::latin1_to_utf8(&data).ok_or(DecodingError::Latin1)
