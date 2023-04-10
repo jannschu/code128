@@ -198,7 +198,7 @@ pub(super) fn encode_as_indices(mut bytes: &[u8]) -> Vec<u8> {
                     bytes = eat_double_digits(&bytes[4..], &mut candidates);
                     continue;
                 }
-                // Two digits are advantageous for candidates in
+                // Two digits can be advantageous for candidates in
                 // latin mode, but disadvantageous for the rest unless they are last.
                 //
                 // Because this branch is last we know that the next character(s)
@@ -207,13 +207,23 @@ pub(super) fn encode_as_indices(mut bytes: &[u8]) -> Vec<u8> {
                     let digits = (c1 - b'0') * 10 + (c2 - b'0');
                     for enc in candidates.drain(..) {
                         if enc.latin {
+                            // switching off latin mode may be better
+                            let mut alt1 = enc.clone();
+                            alt1.latin = false;
+                            new_candidates.push(alt1.push([
+                                enc.mode.switch(),
+                                enc.mode.switch(),
+                                c1 - b' ',
+                                c2 - b' ',
+                            ]));
+
                             // switch to C, then back to A or B
-                            let mut alt1 = enc.push([SWITCH_C, digits]);
-                            let mut alt2 = alt1.clone();
-                            alt1.switch(Mode::A);
-                            alt2.switch(Mode::B);
-                            new_candidates.push(alt1);
+                            let mut alt2 = enc.push([SWITCH_C, digits]);
+                            let mut alt3 = alt2.clone();
+                            alt2.switch(Mode::A);
+                            alt3.switch(Mode::B);
                             new_candidates.push(alt2);
+                            new_candidates.push(alt3);
                         } else {
                             // encode directly
                             new_candidates.push(enc.push([c1 - b' ', c2 - b' ']));
@@ -344,7 +354,7 @@ pub(super) fn encode_as_indices_fast(mut bytes: &[u8]) -> Vec<u8> {
         for byte in bytes.iter().cloned() {
             let byte = if byte >= 128 { byte - 128 } else { byte };
             match byte {
-                0x00..=0x1A => return CharacterType::Control,
+                0x00..=0x1F => return CharacterType::Control,
                 0x60..=0x7F => return CharacterType::Lower,
                 _ => (),
             }
@@ -419,7 +429,7 @@ pub(super) fn encode_as_indices_fast(mut bytes: &[u8]) -> Vec<u8> {
         let pos = enc.symbols.len();
         match enc.mode {
             Mode::A => match byte {
-                0x00..=0x1A => enc.symbols.push(byte + 0x40),
+                0x00..=0x1F => enc.symbols.push(byte + 0x40),
                 0x20..=0x5F => enc.symbols.push(byte - b' '),
                 0x60..=0x7F => {
                     enc = match next(&bytes[1..]) {
@@ -435,7 +445,7 @@ pub(super) fn encode_as_indices_fast(mut bytes: &[u8]) -> Vec<u8> {
             },
             Mode::B => match byte {
                 0x20..=0x7F => enc.symbols.push(byte - b' '),
-                0x00..=0x1A => {
+                0x00..=0x1F => {
                     enc = match next(&bytes[1..]) {
                         CharacterType::Lower => enc.push([SHIFT_MODE]),
                         CharacterType::Control => {
@@ -533,6 +543,67 @@ fn test_bits_to_modules() {
             Module { width: 2, space: 0 },
         ]
     );
+}
+
+#[cfg(test)]
+fn decode(indices: &[u8]) -> Result<Vec<u8>, crate::DecodingError> {
+    let mut indices: Vec<_> = indices.into();
+    indices.push(crate::checksum(indices.iter().cloned()));
+    indices.push(crate::STOP);
+    let modules: Vec<_> = indices
+        .iter()
+        .flat_map(|idx| bits_to_modules(PATTERNS[*idx as usize]))
+        .collect();
+    crate::decode(&modules)
+}
+
+#[cfg(test)]
+fn debug_indices(indices: &[u8]) {
+    use std::fmt::Write;
+
+    let mut out = String::new();
+    let mut mode = match indices[0] {
+        START_A => {
+            out.push_str("Aₛ");
+            Mode::A
+        }
+        START_B => {
+            out.push_str("Bₛ");
+            Mode::B
+        }
+        START_C => {
+            out.push_str("Cₛ");
+            Mode::C
+        }
+        _ => panic!("invalid start symbol"),
+    };
+    for idx in indices[1..].iter().cloned() {
+        match (mode, idx) {
+            (Mode::A, SWITCH_A) | (Mode::B, SWITCH_B) => out.push_str(" FNC4"),
+            (_, SWITCH_A) => {
+                out.push_str(" A");
+                mode = Mode::A;
+            }
+            (_, SWITCH_B) => {
+                out.push_str(" B");
+                mode = Mode::B;
+            }
+            (_, SWITCH_C) => {
+                out.push_str(" C");
+                mode = Mode::C;
+            }
+            (_, SHIFT_MODE) => out.push_str(" SHIFT"),
+            (Mode::C, 0..=99) => write!(out, " {:02}ᴰ", idx).unwrap(),
+            (Mode::A | Mode::B, 0x00..=0x3F) | (Mode::B, 0x40..=0x5E) => {
+                write!(out, " '{}'", (idx + 0x20) as char).unwrap()
+            }
+            (Mode::B, 0x5F) => write!(out, " {:02x}ᴬ", idx + 0x20).unwrap(),
+            (Mode::A, 0x40..=0x5F) => write!(out, " {:02x}ᴬ", idx - 0x40).unwrap(),
+            (_, crate::STOP) => out.push_str(" STOP"),
+            (_, _) => write!(out, " ?{:02x}", idx).unwrap(),
+        }
+    }
+    println!("{}", out);
 }
 
 #[test]
@@ -906,4 +977,38 @@ fn test_latin_switch_end_of_data_edge_case() {
         encode_as_indices_fast(msg),
         vec![START_B, SWITCH_B, SWITCH_B, 95, 95, 95, 95, SWITCH_B, SHIFT_MODE, 0x40],
     );
+}
+
+#[test]
+fn test_controls() {
+    let msg = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\x0c\r\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f";
+    let opt = encode_as_indices(msg);
+    let fast = encode_as_indices_fast(msg);
+    let out = b"@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_";
+    let mut out_enc = vec![START_A];
+    out_enc.extend_from_slice(out);
+    assert_eq!(opt, out_enc);
+    assert_eq!(fast, out_enc);
+
+    let msg = b"\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9a\x9b\x9c\x9d\x9e\x9f";
+    let opt = encode_as_indices(msg);
+    let fast = encode_as_indices_fast(msg);
+    let out = b"@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_";
+    let mut out_enc = vec![START_A, SWITCH_A, SWITCH_A];
+    out_enc.extend_from_slice(out);
+    assert_eq!(opt, out_enc);
+    assert_eq!(fast, out_enc);
+}
+
+#[test]
+fn test_unk() {
+    let msg = b"\xff\xff\xff\x00\xa0\xa0\x00\xff000\x00";
+    let dynm = encode_as_indices(msg);
+    let fast = encode_as_indices_fast(msg);
+    // debug_indices(&dynm);
+    // debug_indices(&fast);
+    assert_eq!(decode(&dynm), Ok(msg.as_slice().into()));
+    assert_eq!(decode(&fast), Ok(msg.as_slice().into()));
+    assert_eq!(dynm.len(), 21);
+    assert_eq!(fast.len(), 21);
 }
