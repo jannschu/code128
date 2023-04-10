@@ -1,3 +1,6 @@
+use crate::std::vec;
+use crate::std::vec::Vec;
+
 use super::{Module, SHIFT_MODE, START_A, START_B, START_C, SWITCH_A, SWITCH_B, SWITCH_C};
 
 /// Line patterns used in Code 128 by index, encoded as binary.
@@ -158,7 +161,7 @@ pub(super) fn encode_as_indices_dp(mut bytes: &[u8], mut candidates: Vec<Encodat
 
     macro_rules! enplace_new_candidates {
         () => {
-            std::mem::swap(&mut candidates, &mut new_candidates);
+            core::mem::swap(&mut candidates, &mut new_candidates);
 
             // remove hopeless cases
             candidates.sort_unstable_by_key(|c| c.symbols.len());
@@ -521,9 +524,9 @@ fn decode(indices: &[u8]) -> Result<Vec<u8>, crate::DecodingError> {
 #[cfg(test)]
 #[allow(dead_code)]
 fn debug_indices(indices: &[u8]) {
-    use std::fmt::Write;
+    use core::fmt::Write;
 
-    let mut out = String::new();
+    let mut out = crate::std::string::String::new();
     let mut mode = match indices[0] {
         START_A => {
             out.push_str("Aₛ");
@@ -565,7 +568,8 @@ fn debug_indices(indices: &[u8]) {
             (_, _) => write!(out, " ?{:02x}", idx).unwrap(),
         }
     }
-    println!("{}", out);
+    #[cfg(feature = "std")]
+    std::println!("{}", out);
 }
 
 #[cfg(test)]

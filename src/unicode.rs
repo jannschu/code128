@@ -1,3 +1,6 @@
+use crate::std::string::{String, ToString};
+use crate::std::vec::Vec;
+
 use crate::Module;
 
 struct Buffer(String, Vec<bool>);

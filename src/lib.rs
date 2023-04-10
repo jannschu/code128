@@ -30,6 +30,17 @@
 //! interpret results as UTF-8, although that is not covered by the standard.
 //! However, if you are in control of encoding and decoding this is technically
 //! possible and maybe even a contemporary choice.
+#![no_std]
+
+#[cfg(not(feature = "std"))]
+extern crate alloc as std;
+#[cfg(feature = "std")]
+extern crate std;
+
+#[cfg(test)]
+use std::vec;
+use std::vec::Vec;
+
 mod decode;
 mod encode;
 mod latin1;
@@ -160,7 +171,7 @@ impl Code128Builder {
     pub fn encode(self, data: &[u8]) -> Code128 {
         let mut indices = match self.encoder {
             Encoder::Mixed => encode::encode_as_indices(data),
-            Encoder::DynamicProgramming => encode::encode_as_indices_dp(data, vec![]),
+            Encoder::DynamicProgramming => encode::encode_as_indices_dp(data, Vec::new()),
         };
         indices.push(checksum(indices.iter().cloned()));
         indices.push(STOP);

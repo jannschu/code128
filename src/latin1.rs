@@ -1,3 +1,8 @@
+use crate::std::string::String;
+#[cfg(test)]
+use crate::std::vec;
+use crate::std::vec::Vec;
+
 pub(crate) fn utf8_to_latin1(s: &str) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(s.len());
     for ch in s.chars() {

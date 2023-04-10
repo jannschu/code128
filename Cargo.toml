@@ -10,8 +10,12 @@ repository = "https://github.com/jannschu/code128/"
 categories = ["encoding"]
 keywords = ["code128", "barcode"]
 
+[features]
+default = ["std"]
+std = ["dep:thiserror"]
+
 [dependencies]
-thiserror = "1.0.40"
+thiserror = { version = "1.0.40", optional = true }
 
 [dev-dependencies]
 atty = "0.2.14"

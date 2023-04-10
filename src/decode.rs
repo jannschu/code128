@@ -1,36 +1,45 @@
+use crate::std::string::String;
+use crate::std::vec;
+use crate::std::vec::Vec;
+
+#[cfg(feature = "std")]
 use thiserror::Error;
 
 use crate::Module;
 
 /// Errors that can occur during decoding.
-#[derive(Error, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
+#[cfg_attr(feature = "std", derive(Error))]
 pub enum DecodingError {
     /// A sequence of modules resulted in an unknown pattern.
-    #[error("pattern {0:b} not recognized")]
+    #[cfg_attr(feature = "std", error("pattern {0:b} not recognized"))]
     Pattern(u16),
     /// A module's width or spacing is not valid.
-    #[error("modules are not valid")]
+    #[cfg_attr(feature = "std", error("modules are not valid"))]
     InvalidModules,
     /// The stop code at the end is wrong.
-    #[error("wrong stop code")]
+    #[cfg_attr(feature = "std", error("wrong stop code"))]
     WrongStop,
     /// The input was too short.
-    #[error("code too short to be valid")]
+    #[cfg_attr(feature = "std", error("code too short to be valid"))]
     Short,
     /// The code's length can not fit an allowed sequence of modules.
-    #[error("length not correct")]
+    #[cfg_attr(feature = "std", error("length not correct"))]
     Length,
     /// The checksum did not match.
-    #[error("checksum mismatch")]
+    #[cfg_attr(feature = "std", error("checksum mismatch"))]
     Checksum,
     /// The code did not start with a mode signal.
-    #[error("start char did not signal mode")]
+    #[cfg_attr(feature = "std", error("start char did not signal mode"))]
     NoMode,
     /// A symbol occurred in a mode that did not support it or is not implemented.
-    #[error("unexpected character {0:x}")]
+    #[cfg_attr(feature = "std", error("unexpected character {0:x}"))]
     Unexpected(u8),
     /// After decoding the data the conversion from Latin 1 failed.
-    #[error("characters not covered by Latin 1 were part of this symbol")]
+    #[cfg_attr(
+        feature = "std",
+        error("characters not covered by Latin 1 were part of this symbol")
+    )]
     Latin1,
 }
 
