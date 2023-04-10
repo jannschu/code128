@@ -120,7 +120,7 @@ fn maybe_c_start(mut bytes: &[u8]) -> Option<Encodation> {
                 (c3 - b'0') * 10 + (c4 - b'0'),
             ]);
             bytes = &bytes[4..];
-            while let [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9'] = bytes {
+            while let [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9', ..] = bytes {
                 enc.symbols.push((c1 - b'0') * 10 + (c2 - b'0'));
                 bytes = &bytes[2..];
             }
@@ -381,7 +381,7 @@ pub(super) fn encode_as_indices_fast(mut bytes: &[u8]) -> Vec<u8> {
                 (c3 - b'0') * 10 + (c4 - b'0'),
             ]);
             bytes = &bytes[4..];
-            while let [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9'] = bytes {
+            while let [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9', ..] = bytes {
                 enc.symbols.push((c1 - b'0') * 10 + (c2 - b'0'));
                 bytes = &bytes[2..];
             }
@@ -389,6 +389,7 @@ pub(super) fn encode_as_indices_fast(mut bytes: &[u8]) -> Vec<u8> {
         }
         _ => Encodation::new(a_or_b_heuristic(bytes)),
     };
+
     while !bytes.is_empty() {
         match (enc.latin, bytes) {
             // in latin mode it is advantageous to switch for even two digits
@@ -396,7 +397,7 @@ pub(super) fn encode_as_indices_fast(mut bytes: &[u8]) -> Vec<u8> {
                 enc.switch(Mode::C);
                 enc.symbols.push((c1 - b'0') * 10 + (c2 - b'0'));
                 bytes = &bytes[2..];
-                while let [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9'] = bytes {
+                while let [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9', ..] = bytes {
                     enc.symbols.push((c1 - b'0') * 10 + (c2 - b'0'));
                     bytes = &bytes[2..];
                 }
@@ -410,7 +411,7 @@ pub(super) fn encode_as_indices_fast(mut bytes: &[u8]) -> Vec<u8> {
                 enc.symbols.push((c1 - b'0') * 10 + (c2 - b'0'));
                 enc.symbols.push((c3 - b'0') * 10 + (c4 - b'0'));
                 bytes = &bytes[4..];
-                while let [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9'] = bytes {
+                while let [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9', ..] = bytes {
                     enc.symbols.push((c1 - b'0') * 10 + (c2 - b'0'));
                     bytes = &bytes[2..];
                 }
@@ -1001,12 +1002,32 @@ fn test_controls() {
 }
 
 #[test]
-fn test_unk() {
+fn test_only_digits() {
+    let msg = b"6666684744";
+    let dynm = encode_as_indices(msg);
+    let fast = encode_as_indices_fast(msg);
+    assert_eq!(decode(&dynm), Ok(msg.as_slice().into()));
+    assert_eq!(decode(&fast), Ok(msg.as_slice().into()));
+    assert_eq!(fast.len(), 6);
+    assert_eq!(dynm.len(), 6);
+}
+
+#[test]
+fn test_many_digits() {
+    let msg = b"a123456";
+    let dynm = encode_as_indices(msg);
+    let fast = encode_as_indices_fast(msg);
+    assert_eq!(decode(&dynm), Ok(msg.as_slice().into()));
+    assert_eq!(decode(&fast), Ok(msg.as_slice().into()));
+    assert_eq!(fast.len(), 6);
+    assert_eq!(dynm.len(), 6);
+}
+
+#[test]
+fn test_latin_two_digit_case_that_should_switch() {
     let msg = b"\xff\xff\xff\x00\xa0\xa0\x00\xff000\x00";
     let dynm = encode_as_indices(msg);
     let fast = encode_as_indices_fast(msg);
-    // debug_indices(&dynm);
-    // debug_indices(&fast);
     assert_eq!(decode(&dynm), Ok(msg.as_slice().into()));
     assert_eq!(decode(&fast), Ok(msg.as_slice().into()));
     assert_eq!(dynm.len(), 21);
