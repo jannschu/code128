@@ -92,7 +92,8 @@ pub struct BarCoordinate {
 
 /// A Code 128.
 ///
-/// You can use the [bars iterator](Self::bars) and the [size](Self::len)
+/// You can use the bars iterators [`bars()`](Self::bars) or
+/// [`bar_coordinates()`](Self::bar_coordinates), and the [size](Self::len)
 /// to compute a visualization. A bars corresponds to a "black
 /// line" of the code and has a unitless width between one and four, as well
 /// as a free space after it, also sized between one and four.
@@ -106,7 +107,7 @@ pub struct BarCoordinate {
 ///
 /// The standard demands a quiet zone of size 10X (see above for notation) on
 /// the left and right side of the code. To compute the size of a bar, multiply
-/// its [width](Bar::width) with the available space for the code divided by
+/// its width with the available space for the code divided by
 /// the [code's length](Self::len).
 ///
 /// ```rust
