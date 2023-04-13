@@ -5,7 +5,7 @@ use crate::std::vec::Vec;
 #[cfg(feature = "std")]
 use thiserror::Error;
 
-use crate::Module;
+use crate::Bar;
 
 /// Errors that can occur during decoding.
 #[derive(Debug, PartialEq)]
@@ -14,9 +14,9 @@ pub enum DecodingError {
     /// A sequence of modules resulted in an unknown pattern.
     #[cfg_attr(feature = "std", error("pattern {0:b} not recognized"))]
     Pattern(u16),
-    /// A module's width or spacing is not valid.
-    #[cfg_attr(feature = "std", error("modules are not valid"))]
-    InvalidModules,
+    /// A bar's width or spacing is not valid.
+    #[cfg_attr(feature = "std", error("bar is not valid"))]
+    InvalidBar,
     /// The stop code at the end is wrong.
     #[cfg_attr(feature = "std", error("wrong stop code"))]
     WrongStop,
@@ -71,44 +71,44 @@ pub(crate) fn lookup(pattern: u16) -> Result<u8, DecodingError> {
         .map(|i| PATTERN_INDEX[i])
 }
 
-fn modules_to_pattern(modules: &[Module]) -> Result<u16, DecodingError> {
-    if modules.is_empty() {
+fn bars_to_pattern(bars: &[Bar]) -> Result<u16, DecodingError> {
+    if bars.is_empty() {
         return Ok(0);
     }
     let mut result = 0;
-    for module in modules {
-        match module.width {
+    for bar in bars {
+        match bar.width {
             1 => result = (result << 1) | 0b1,
             2 => result = (result << 2) | 0b11,
             3 => result = (result << 3) | 0b111,
             4 => result = (result << 4) | 0b1111,
-            _ => return Err(DecodingError::InvalidModules),
+            _ => return Err(DecodingError::InvalidBar),
         }
-        result <<= module.space;
+        result <<= bar.space;
     }
     Ok(result)
 }
 
-fn decode_codes(modules: &[Module]) -> Result<Vec<u8>, DecodingError> {
-    if modules.len() < 3 + 3 + 4 {
+fn decode_codes(bars: &[Bar]) -> Result<Vec<u8>, DecodingError> {
+    if bars.len() < 3 + 3 + 4 {
         return Err(DecodingError::Short);
     }
-    let (init, stop) = modules.split_at(modules.len() - 4);
+    let (init, stop) = bars.split_at(bars.len() - 4);
 
-    if modules_to_pattern(stop)? != crate::encode::PATTERNS[crate::STOP as usize] {
+    if bars_to_pattern(stop)? != crate::encode::PATTERNS[crate::STOP as usize] {
         return Err(DecodingError::WrongStop);
     }
 
-    let (data, checksum) = init.split_at(init.len() - 3);
+    let (data, checksum_bars) = init.split_at(init.len() - 3);
 
     if data.len() % 3 != 0 {
         return Err(DecodingError::Length);
     }
 
-    let checksum = lookup(modules_to_pattern(checksum)?)?;
+    let checksum = lookup(bars_to_pattern(checksum_bars)?)?;
     let result = data
         .chunks_exact(3)
-        .map(|chunk| lookup(modules_to_pattern(chunk)?))
+        .map(|chunk| lookup(bars_to_pattern(chunk)?))
         .collect::<Result<Vec<u8>, _>>()?;
     let computed_checksum = crate::checksum(result.iter().cloned());
     if checksum != computed_checksum {
@@ -132,8 +132,8 @@ fn decode_b(ch: u8) -> Result<u8, DecodingError> {
     }
 }
 
-/// Decode a sequence of modules.
-pub fn decode(modules: &[Module]) -> Result<Vec<u8>, DecodingError> {
+/// Decode a sequence of bars.
+pub fn decode(bars: &[Bar]) -> Result<Vec<u8>, DecodingError> {
     #[derive(Clone, Copy, Debug)]
     enum Mode {
         A,
@@ -147,7 +147,7 @@ pub fn decode(modules: &[Module]) -> Result<Vec<u8>, DecodingError> {
         Once(bool),
     }
 
-    let codes = decode_codes(modules)?;
+    let codes = decode_codes(bars)?;
     let mut codes = codes.iter().cloned().peekable();
     let mut mode = match codes.next() {
         Some(crate::START_A) => Mode::A,
@@ -260,40 +260,37 @@ pub fn decode(modules: &[Module]) -> Result<Vec<u8>, DecodingError> {
     Ok(data)
 }
 
-/// Decode the modules and interpret the data as Latin 1.
+/// Decode the bars and interpret the data as Latin 1.
 ///
 /// The control characters of ASCII, `0x00` to `0x19`, are also decoded.
-pub fn decode_str(modules: &[Module]) -> Result<String, DecodingError> {
-    let data = decode(modules)?;
+pub fn decode_str(bars: &[Bar]) -> Result<String, DecodingError> {
+    let data = decode(bars)?;
     crate::latin1::latin1_to_utf8(&data).ok_or(DecodingError::Latin1)
 }
 
 #[test]
-fn test_modules_to_pattern() {
+fn test_bars_to_pattern() {
+    assert_eq!(bars_to_pattern(&[Bar { width: 2, space: 0 }]), Ok(0b11));
     assert_eq!(
-        modules_to_pattern(&[Module { width: 2, space: 0 }]),
-        Ok(0b11),
-    );
-    assert_eq!(
-        modules_to_pattern(&[
-            Module { width: 2, space: 1 },
-            Module { width: 1, space: 2 },
-            Module { width: 3, space: 2 },
+        bars_to_pattern(&[
+            Bar { width: 2, space: 1 },
+            Bar { width: 1, space: 2 },
+            Bar { width: 3, space: 2 },
         ]),
         Ok(0b11010011100),
     );
 
     for pattern in crate::encode::PATTERNS {
-        let modules = crate::encode::bits_to_modules(pattern);
-        assert_eq!(modules_to_pattern(&modules), Ok(pattern));
+        let bars = crate::encode::bits_to_bars(pattern);
+        assert_eq!(bars_to_pattern(&bars), Ok(pattern));
     }
 }
 
 #[test]
 fn test_hello_world() {
     let msg = b"HELLO\n123456w0r1\rd";
-    let modules: Vec<Module> = super::Code128::encode(msg).modules().collect();
-    assert_eq!(decode(&modules), Ok(msg.as_slice().into()));
+    let bars: Vec<Bar> = super::Code128::encode(msg).bars().collect();
+    assert_eq!(decode(&bars), Ok(msg.as_slice().into()));
 }
 
 #[test]
@@ -305,30 +302,30 @@ fn test_latin() {
         b"|\xF0\xF1\xF21",
     ];
     for msg in messages {
-        let modules: Vec<Module> = super::Code128::encode(msg).modules().collect();
-        assert_eq!(decode(&modules), Ok(msg.into()));
+        let bars: Vec<Bar> = super::Code128::encode(msg).bars().collect();
+        assert_eq!(decode(&bars), Ok(msg.into()));
     }
 }
 
 #[test]
 fn test_empty() {
     let msg = b"";
-    let modules: Vec<Module> = super::Code128::encode(msg).modules().collect();
-    assert_eq!(decode(&modules), Ok(msg.as_slice().into()));
+    let bars: Vec<Bar> = super::Code128::encode(msg).bars().collect();
+    assert_eq!(decode(&bars), Ok(msg.as_slice().into()));
 }
 
 #[test]
 fn test_case1() {
     let msg = &[10, 246];
     let code = super::Code128::encode(msg);
-    let modules: Vec<Module> = code.modules().collect();
-    assert_eq!(decode(&modules), Ok(msg.as_slice().into()));
+    let bars: Vec<Bar> = code.bars().collect();
+    assert_eq!(decode(&bars), Ok(msg.as_slice().into()));
 }
 
 #[test]
 fn test_case2() {
     let msg = &[255, 145, 246, 246];
     let code = super::Code128::encode(msg);
-    let modules: Vec<Module> = code.modules().collect();
-    assert_eq!(decode(&modules), Ok(msg.as_slice().into()));
+    let bars: Vec<Bar> = code.bars().collect();
+    assert_eq!(decode(&bars), Ok(msg.as_slice().into()));
 }

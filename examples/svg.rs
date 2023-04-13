@@ -16,12 +16,12 @@ fn main() {
         code.len(),
         height,
     );
-    for module in code.modules() {
+    for bar in code.bars() {
         svg += &format!(
             r#"h{0}v{1}h-{0}zm{2} 0"#,
-            module.width,
+            bar.width,
             height,
-            module.space + module.width
+            bar.space + bar.width
         );
     }
     svg += r#""/></svg>"#;

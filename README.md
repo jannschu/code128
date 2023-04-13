@@ -12,8 +12,8 @@ ISO/IEC 15417:2007.
 </p>
 
 To achieve a minimal encoding size a dynamic programming approach is used. The
-full 256 bit range can be encoded. For compatibility it is recommended to stay
-within printable ASCII though.
+full 256 bit range can be encoded. For best compatibility it is recommended to
+stay within printable ASCII though.
 
 The implementation goals in order of importance are
 

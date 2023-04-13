@@ -1,7 +1,7 @@
 use crate::std::vec;
 use crate::std::vec::Vec;
 
-use super::{Module, SHIFT_MODE, START_A, START_B, START_C, SWITCH_A, SWITCH_B, SWITCH_C};
+use super::{Bar, SHIFT_MODE, START_A, START_B, START_C, SWITCH_A, SWITCH_B, SWITCH_C};
 
 /// Line patterns used in Code 128 by index, encoded as binary.
 pub(crate) const PATTERNS: [u16; 109] = [
@@ -464,8 +464,8 @@ fn encode_as_indices_look_ahead(mut bytes: &[u8]) -> (Encodation, &[u8]) {
     (enc, bytes)
 }
 
-pub(super) fn bits_to_modules(mut bits: u16) -> Vec<Module> {
-    let mut modules = Vec::with_capacity(3);
+pub(super) fn bits_to_bars(mut bits: u16) -> Vec<Bar> {
+    let mut bars = Vec::with_capacity(3);
     while bits != 0 {
         let mut width = 0;
         let zeroes = bits.leading_zeros();
@@ -477,34 +477,34 @@ pub(super) fn bits_to_modules(mut bits: u16) -> Vec<Module> {
                 break;
             }
         }
-        modules.push(Module {
+        bars.push(Bar {
             width: width as u8,
             space: (bits.leading_zeros() - width - zeroes) as u8,
         });
     }
-    modules
+    bars
 }
 
 #[test]
-fn test_bits_to_modules() {
-    assert_eq!(bits_to_modules(0), vec![]);
-    let modules = bits_to_modules(0b10000011010);
+fn test_bits_to_bars() {
+    assert_eq!(bits_to_bars(0), vec![]);
+    let bars = bits_to_bars(0b10000011010);
     assert_eq!(
-        modules,
+        bars,
         vec![
-            Module { width: 1, space: 5 },
-            Module { width: 2, space: 1 },
-            Module { width: 1, space: 1 },
+            Bar { width: 1, space: 5 },
+            Bar { width: 2, space: 1 },
+            Bar { width: 1, space: 1 },
         ]
     );
-    let modules = bits_to_modules(0b1100011101011);
+    let bars = bits_to_bars(0b1100011101011);
     assert_eq!(
-        modules,
+        bars,
         vec![
-            Module { width: 2, space: 3 },
-            Module { width: 3, space: 1 },
-            Module { width: 1, space: 1 },
-            Module { width: 2, space: 0 },
+            Bar { width: 2, space: 3 },
+            Bar { width: 3, space: 1 },
+            Bar { width: 1, space: 1 },
+            Bar { width: 2, space: 0 },
         ]
     );
 }
@@ -514,11 +514,11 @@ fn decode(indices: &[u8]) -> Result<Vec<u8>, crate::DecodingError> {
     let mut indices: Vec<_> = indices.into();
     indices.push(crate::checksum(indices.iter().cloned()));
     indices.push(crate::STOP);
-    let modules: Vec<_> = indices
+    let bars: Vec<_> = indices
         .iter()
-        .flat_map(|idx| bits_to_modules(PATTERNS[*idx as usize]))
+        .flat_map(|idx| bits_to_bars(PATTERNS[*idx as usize]))
         .collect();
-    crate::decode(&modules)
+    crate::decode(&bars)
 }
 
 #[cfg(test)]
@@ -705,7 +705,7 @@ fn test_encoder_start_c() {
     assert_eq!(encode_as_indices_dp(b"45", vec![]), vec![START_C, 45]);
     let out = encode_as_indices_dp(b"45 ", vec![]);
     assert!([START_A, START_B].contains(&out[0]));
-    assert_eq!(out, vec![out[0], b'4' - b' ', b'5' - b' ', 0],);
+    assert_eq!(out, vec![out[0], b'4' - b' ', b'5' - b' ', 0]);
     assert_eq!(
         encode_as_indices_dp(b"453289", vec![]),
         vec![START_C, 45, 32, 89]

@@ -1,7 +1,7 @@
 use crate::std::string::{String, ToString};
 use crate::std::vec::Vec;
 
-use crate::Module;
+use crate::Bar;
 
 struct Buffer(String, Vec<bool>);
 
@@ -10,8 +10,8 @@ impl Buffer {
         Self("     ".to_string(), Vec::with_capacity(2))
     }
 
-    fn push(&mut self, module: bool) {
-        self.1.push(module);
+    fn push(&mut self, bar: bool) {
+        self.1.push(bar);
         if self.1.len() == 2 {
             match (self.1[0], self.1[1]) {
                 (true, true) => self.0.push('█'),
@@ -31,25 +31,25 @@ impl Buffer {
     }
 }
 
-/// Create a string representation of the modules using Unicode block characters.
+/// Create a string representation of the bars using Unicode block characters.
 ///
 /// The quiet zones are included.
 ///
 /// ## Example
 /// ```
-/// # use code128::{Code128, modules_to_blocks};
+/// # use code128::{Code128, bars_to_blocks};
 /// assert_eq!(
-///     modules_to_blocks(Code128::encode(b"<3").modules()),
+///     bars_to_blocks(Code128::encode(b"<3").bars()),
 ///     "     █▐ ▌ ▐█ █▐ █ ▌█▌▐  ▌█ █ ▐█▐▐▌     ",
 /// );
 /// ```
-pub fn modules_to_blocks(modules: impl IntoIterator<Item = Module>) -> String {
+pub fn bars_to_blocks(bars: impl IntoIterator<Item = Bar>) -> String {
     let mut buf = Buffer::new();
-    for module in modules {
-        for _ in 0..module.width {
+    for bar in bars {
+        for _ in 0..bar.width {
             buf.push(true);
         }
-        for _ in 0..module.space {
+        for _ in 0..bar.space {
             buf.push(false);
         }
     }

@@ -8,10 +8,10 @@
 //! ## Example
 //!
 //! ```rust
-//! use code128::{Code128, modules_to_blocks};
+//! use code128::{Code128, bars_to_blocks};
 //!
 //! let code = Code128::encode(b"Hello!");
-//! println!("{}", modules_to_blocks(code.modules()));
+//! println!("{}", bars_to_blocks(code.bars()));
 //! ```
 //! To create other outputs check out the [Code128] documentation.
 //!
@@ -48,7 +48,7 @@ mod unicode;
 
 pub use decode::{decode, decode_str, DecodingError};
 
-pub use unicode::modules_to_blocks;
+pub use unicode::bars_to_blocks;
 
 const SHIFT_MODE: u8 = 98;
 const SWITCH_C: u8 = 99;
@@ -69,7 +69,7 @@ fn checksum(symbols: impl Iterator<Item = u8>) -> u8 {
 
 /// Representation of a "black line" in the code.
 #[derive(PartialEq, Debug, Clone, Copy)]
-pub struct Module {
+pub struct Bar {
     /// The width of the line.
     ///
     /// Ranges from one to four.
@@ -78,31 +78,46 @@ pub struct Module {
     pub space: u8,
 }
 
+/// A coordinate of a bar in a barcode.
+#[derive(PartialEq, Debug, Clone, Copy)]
+pub struct BarCoordinate {
+    /// The x coordinate, started from the left.
+    ///
+    /// The first bar will always be at 10, which is the
+    /// offset for the left quiet zone.
+    pub x: u32,
+    /// The width of the bar.
+    pub width: u8,
+}
+
 /// A Code 128.
 ///
-/// You can use the [modules iterator](Self::modules) and the [size](Self::len)
-/// to compute a visualization. A module corresponds to a "black
+/// You can use the [bars iterator](Self::bars) and the [size](Self::len)
+/// to compute a visualization. A bars corresponds to a "black
 /// line" of the code and has a unitless width between one and four, as well
 /// as a free space after it, also sized between one and four.
 ///
+/// A bar with width one is called a "module". You can say a bar consists of one
+/// or more modules. The width of a module is often called "X", denoting one
+/// unit in the "x-dimension" of the barcode. A multiple of a module's width is
+/// usually written `<multiplier>X`, for example `1X` or `2.5X`.
+///
 /// ## Pseudo code for visualization
 ///
-/// Be aware that the standard demands a quiet zone of size 10 around the code.
-/// To compute the size of a block, multiply its width with the available space
-/// for the code (with a unit) divided by `20 + len()`. Here 20 corresponds to
-/// the quiet zone.
+/// The standard demands a quiet zone of size 10X (see above for notation) on
+/// the left and right side of the code. To compute the size of a bar, multiply
+/// its [width](Bar::width) with the available space for the code divided by
+/// the [code's length](Self::len).
 ///
 /// ```rust
 /// # use code128::Code128;
 /// let code = Code128::encode(b"Code128 <3");
 /// let available_space = 100.0; // unit is, say, "pt"
 /// let line_width = available_space / code.len() as f64;
-/// let mut pos = 10;
-/// for module in code.modules() {
-///      let x = pos as f64 * line_width;
-///      let width = module.width as f64 * line_width;
+/// for bar in code.bar_coordinates() {
+///      let x = bar.x as f64 * line_width;
+///      let width = bar.width as f64 * line_width;
 ///      // print line at `x` pt, `width` pt wide
-///      pos += module.width + module.space;
 /// }
 /// ```
 pub struct Code128 {
@@ -127,14 +142,26 @@ impl Code128 {
         Code128Builder::default().encode_str(text)
     }
 
-    /// Get the sequence of modules this Code 128 consists of.
-    pub fn modules(&self) -> impl Iterator<Item = Module> + '_ {
+    /// Get the sequence of bars this Code 128 consists of.
+    pub fn bars(&self) -> impl Iterator<Item = Bar> + '_ {
         self.indices
             .iter()
-            .flat_map(|idx| encode::bits_to_modules(encode::PATTERNS[*idx as usize]))
+            .flat_map(|idx| encode::bits_to_bars(encode::PATTERNS[*idx as usize]))
     }
 
-    /// Get the total width of the code in units of the [Module](crate::Module)
+    /// Get the coordinates of the bars this Code 128 consists of.
+    pub fn bar_coordinates(&self) -> impl Iterator<Item = BarCoordinate> + '_ {
+        self.bars().scan(10, |pos, bar| {
+            let x = *pos;
+            *pos += bar.width as u32 + bar.space as u32;
+            Some(BarCoordinate {
+                x,
+                width: bar.width,
+            })
+        })
+    }
+
+    /// Get the total width of the code in units of the [Bar](crate::Bar)
     /// with the quiet zone included.
     pub fn len(&self) -> usize {
         self.indices.len() * 11 + 2 + 20
@@ -199,16 +226,16 @@ impl Default for Code128Builder {
 }
 
 #[test]
-fn test_module_size() {
+fn test_bar_size() {
     for pattern in &encode::PATTERNS[0..107] {
-        let size: u32 = encode::bits_to_modules(*pattern)
+        let size: u32 = encode::bits_to_bars(*pattern)
             .into_iter()
             .map(|m| m.width as u32 + m.space as u32)
             .sum();
         assert_eq!(size, 11);
     }
 
-    let size: u32 = encode::bits_to_modules(encode::PATTERNS[STOP as usize])
+    let size: u32 = encode::bits_to_bars(encode::PATTERNS[STOP as usize])
         .into_iter()
         .map(|m| m.width as u32 + m.space as u32)
         .sum();
@@ -219,7 +246,7 @@ fn test_module_size() {
 fn test_code_size() {
     let code = Code128::encode(b"foo");
     let size = code
-        .modules()
+        .bars()
         .map(|m| m.width as u32 + m.space as u32)
         .sum::<u32>()
         + 20;
@@ -236,14 +263,31 @@ fn test_is_empty() {
 fn test_256() {
     for x in 0..=255 {
         let code = Code128::encode(&[x]);
-        let modules: Vec<Module> = code.modules().collect();
-        assert_eq!(decode(&modules), Ok(vec![x]));
+        let bars: Vec<Bar> = code.bars().collect();
+        assert_eq!(decode(&bars), Ok(vec![x]));
     }
 }
 
 #[test]
 fn test_string_encoding_example() {
     let code = Code128::encode_str("Füße").unwrap();
-    let modules: Vec<_> = code.modules().collect();
-    assert_eq!(decode_str(&modules), Ok("Füße".into()));
+    let bars: Vec<_> = code.bars().collect();
+    assert_eq!(decode_str(&bars), Ok("Füße".into()));
+}
+
+#[test]
+fn test_bar_coordinates() {
+    let code = Code128::encode(b"");
+    let bars: Vec<_> = code.bar_coordinates().collect();
+    assert_eq!(bars[0], BarCoordinate { x: 10, width: 2 });
+    assert_eq!(bars[1], BarCoordinate { x: 13, width: 1 });
+    assert_eq!(bars[2], BarCoordinate { x: 16, width: 1 });
+    assert_eq!(bars[3], BarCoordinate { x: 21, width: 2 });
+    assert_eq!(bars[4], BarCoordinate { x: 25, width: 2 });
+    assert_eq!(bars[5], BarCoordinate { x: 28, width: 2 });
+    assert_eq!(bars[6], BarCoordinate { x: 32, width: 2 });
+    assert_eq!(bars[7], BarCoordinate { x: 37, width: 3 });
+    assert_eq!(bars[8], BarCoordinate { x: 41, width: 1 });
+    assert_eq!(bars[9], BarCoordinate { x: 43, width: 2 });
+    assert_eq!(bars.len(), 10);
 }
