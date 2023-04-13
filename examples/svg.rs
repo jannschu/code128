@@ -8,7 +8,8 @@ fn main() {
         let mut stdin = std::io::stdin();
         stdin.read_to_end(&mut msg).unwrap();
     }
-    let code = Code128::encode(&msg);
+    let msg = String::from_utf8(msg).unwrap();
+    let code = Code128::encode_str(&msg).unwrap();
     let mut svg = String::new();
     let height = 20;
     svg += &format!(
