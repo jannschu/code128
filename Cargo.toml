@@ -11,8 +11,9 @@ categories = ["encoding"]
 keywords = ["code128", "barcode"]
 
 [features]
-default = ["std"]
+default = ["std", "unicode"]
 std = ["dep:thiserror"]
+unicode = []
 
 [dependencies]
 thiserror = { version = "1.0.40", optional = true }

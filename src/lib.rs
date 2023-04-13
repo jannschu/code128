@@ -44,10 +44,12 @@ use std::vec::Vec;
 mod decode;
 mod encode;
 mod latin1;
+#[cfg(feature = "unicode")]
 mod unicode;
 
 pub use decode::{decode, decode_str, DecodingError};
 
+#[cfg(feature = "unicode")]
 pub use unicode::bars_to_blocks;
 
 const SHIFT_MODE: u8 = 98;
