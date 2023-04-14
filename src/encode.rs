@@ -598,7 +598,7 @@ fn test_switch_instead_of_shift() {
 fn test_latin_shift() {
     assert_eq!(
         encode_as_indices_dp(b"\x00\x80", vec![]),
-        vec![START_A, b'\x00' + 0x40, SWITCH_A, 0x40],
+        vec![START_A, 0x40, SWITCH_A, 0x40],
     )
 }
 
@@ -606,15 +606,7 @@ fn test_latin_shift() {
 fn test_latin_switch() {
     assert_eq!(
         encode_as_indices_dp(b"\x00\x80\x81\x82", vec![]),
-        vec![
-            START_A,
-            b'\x00' + 0x40,
-            SWITCH_A,
-            SWITCH_A,
-            0x40,
-            0x41,
-            0x42
-        ],
+        vec![START_A, 0x40, SWITCH_A, SWITCH_A, 0x40, 0x41, 0x42],
     )
 }
 
@@ -631,20 +623,8 @@ fn test_latin_switch_cross_c2() {
     assert_eq!(
         encode_as_indices_dp(b"\x00\x8012345678\x80\x81\x82", vec![]),
         vec![
-            START_A,
-            b'\x00' + 0x40,
-            SWITCH_A,
-            SWITCH_A,
-            0x40,
-            SWITCH_C,
-            12,
-            34,
-            56,
-            78,
-            SWITCH_A,
-            0x40,
-            0x41,
-            0x42
+            START_A, 0x40, SWITCH_A, SWITCH_A, 0x40, SWITCH_C, 12, 34, 56, 78, SWITCH_A, 0x40,
+            0x41, 0x42
         ],
     )
 }
