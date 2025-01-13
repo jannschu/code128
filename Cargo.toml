@@ -12,11 +12,11 @@ keywords = ["code128", "barcode"]
 
 [features]
 default = ["std", "unicode"]
-std = ["dep:thiserror"]
+std = ["thiserror/std"]
 unicode = []
 
 [dependencies]
-thiserror = { version = "1.0.40", optional = true }
+thiserror = { version = "2.0.0", default-features = false }
 
 [dev-dependencies]
 atty = "0.2.14"
