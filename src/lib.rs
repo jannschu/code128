@@ -164,7 +164,7 @@ impl Code128 {
         })
     }
 
-    /// Get the total width of the code in units of the [Bar](crate::Bar)
+    /// Get the total width of the code in units of the [Bar]
     /// with the quiet zone included.
     pub fn len(&self) -> usize {
         self.indices.len() * 11 + 2 + 20
