@@ -1,7 +1,7 @@
 [package]
 name = "code128"
 version = "0.2.1"
-edition = "2021"
+edition = "2024"
 authors = ["Jannik Schürg <jannik.schuerg+crates@posteo.de>"]
 readme = "README.md"
 license = "Apache-2.0 OR MIT"
