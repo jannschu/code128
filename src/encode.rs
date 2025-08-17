@@ -117,7 +117,13 @@ fn maybe_c_start(mut bytes: &[u8]) -> Option<Encodation> {
         [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9'] => {
             Some(Encodation::new(Mode::C).push([(c1 - b'0') * 10 + (c2 - b'0')]))
         }
-        [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9', c3 @ b'0'..=b'9', c4 @ b'0'..=b'9', ..] => {
+        [
+            c1 @ b'0'..=b'9',
+            c2 @ b'0'..=b'9',
+            c3 @ b'0'..=b'9',
+            c4 @ b'0'..=b'9',
+            ..,
+        ] => {
             let mut enc = Encodation::new(Mode::C).push([
                 (c1 - b'0') * 10 + (c2 - b'0'),
                 (c3 - b'0') * 10 + (c4 - b'0'),
@@ -200,7 +206,13 @@ pub(super) fn encode_as_indices_dp(mut bytes: &[u8], mut candidates: Vec<Encodat
                 }
                 // at least four digits are the break even point for switching to
                 // C mode, and its advantageous for candidates in latin mode
-                [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9', c3 @ b'0'..=b'9', c4 @ b'0'..=b'9', ..] => {
+                [
+                    c1 @ b'0'..=b'9',
+                    c2 @ b'0'..=b'9',
+                    c3 @ b'0'..=b'9',
+                    c4 @ b'0'..=b'9',
+                    ..,
+                ] => {
                     let pair1 = (c1 - b'0') * 10 + (c2 - b'0');
                     let pair2 = (c3 - b'0') * 10 + (c4 - b'0');
                     for enc in candidates.iter_mut() {
@@ -389,7 +401,13 @@ fn encode_as_indices_look_ahead(mut bytes: &[u8]) -> (Encodation, &[u8]) {
                 &[],
             );
         }
-        [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9', c3 @ b'0'..=b'9', c4 @ b'0'..=b'9', ..] => {
+        [
+            c1 @ b'0'..=b'9',
+            c2 @ b'0'..=b'9',
+            c3 @ b'0'..=b'9',
+            c4 @ b'0'..=b'9',
+            ..,
+        ] => {
             let mut enc = Encodation::new(Mode::C).push([
                 (c1 - b'0') * 10 + (c2 - b'0'),
                 (c3 - b'0') * 10 + (c4 - b'0'),
@@ -405,7 +423,13 @@ fn encode_as_indices_look_ahead(mut bytes: &[u8]) -> (Encodation, &[u8]) {
     };
 
     while !bytes.is_empty() {
-        if let [c1 @ b'0'..=b'9', c2 @ b'0'..=b'9', c3 @ b'0'..=b'9', c4 @ b'0'..=b'9', ..] = bytes
+        if let [
+            c1 @ b'0'..=b'9',
+            c2 @ b'0'..=b'9',
+            c3 @ b'0'..=b'9',
+            c4 @ b'0'..=b'9',
+            ..,
+        ] = bytes
         {
             debug_assert_ne!(enc.mode, Mode::C);
             enc.switch(Mode::C);
@@ -614,7 +638,9 @@ fn test_latin_switch() {
 fn test_latin_switch_cross_c1() {
     assert_eq!(
         encode_as_indices_dp(b"\x80\x80\x8000\x80", vec![]),
-        vec![START_A, SWITCH_A, SWITCH_A, 0x40, 0x40, 0x40, SWITCH_C, 0, SWITCH_A, 0x40],
+        vec![
+            START_A, SWITCH_A, SWITCH_A, 0x40, 0x40, 0x40, SWITCH_C, 0, SWITCH_A, 0x40
+        ],
     )
 }
 
@@ -927,11 +953,15 @@ fn test_latin_switch_end_of_data_edge_case() {
     let msg = b"\xff\xff\xff\xff\x00";
     assert_eq!(
         encode_as_indices_dp(msg, vec![]),
-        vec![START_B, SWITCH_B, SWITCH_B, 95, 95, 95, 95, SHIFT_MODE, SWITCH_A, 0x40],
+        vec![
+            START_B, SWITCH_B, SWITCH_B, 95, 95, 95, 95, SHIFT_MODE, SWITCH_A, 0x40
+        ],
     );
     assert_eq!(
         encode_as_indices(msg),
-        vec![START_B, SWITCH_B, SWITCH_B, 95, 95, 95, 95, SHIFT_MODE, SWITCH_A, 0x40],
+        vec![
+            START_B, SWITCH_B, SWITCH_B, 95, 95, 95, 95, SHIFT_MODE, SWITCH_A, 0x40
+        ],
     );
 }
 

@@ -47,7 +47,7 @@ mod latin1;
 #[cfg(feature = "unicode")]
 mod unicode;
 
-pub use decode::{decode, decode_str, DecodingError};
+pub use decode::{DecodingError, decode, decode_str};
 
 #[cfg(feature = "unicode")]
 pub use unicode::bars_to_blocks;
